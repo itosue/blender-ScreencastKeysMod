@@ -18,11 +18,12 @@
 
 # <pep8 compliant>
 
+
 bl_info = {
-    "name": "Screencast Keys",
-    "author": "Paulo Gomes, Bart Crouch, John E. Herrenyo, Gaia Clary, Pablo Vazquez",
-    "version": (1, 7),
-    "blender": (2, 66, 0),
+    "name": "Screencast Keys Mod",
+    "author": "Paulo Gomes, Bart Crouch, John E. Herrenyo, Gaia Clary, Pablo Vazquez, chromoly",
+    "version": (1, 7, 1),
+    "blender": (2, 74, 0),  # (2, 74, 0) or (2, 74, 4)<commit: 87b6d3c7960461249e80c4c8c304cfc968c6586c>
     "location": "3D View > Properties Panel > Screencast Keys",
     "warning": "",
     "description": "Display keys pressed in the 3D View, "
@@ -64,10 +65,9 @@ def getBoundingBox(current_width, current_height, new_text):
     return(current_width, current_height)
 
 
-def draw_callback_px_text(self, context):
-    wm = context.window_manager
+def draw_callback_px_text(cls, context):
     sc = context.scene
-    if not wm.screencast_keys_keys:
+    if not dm.is_modal_running_any(context):
         return
 
     font_size  = sc.screencast_keys_font_size
@@ -84,7 +84,7 @@ def draw_callback_px_text(self, context):
 
     font_color_r, font_color_g, font_color_b, font_color_alpha = sc.screencast_keys_text_color
     final = 0
-    row_count = len(self.key)
+    row_count = len(cls.key)
 
     keypos_x = pos_x
 
@@ -106,8 +106,8 @@ def draw_callback_px_text(self, context):
     row_count = 0
     alpha = 1.0
 
-    for i in range(len(self.key)):
-        label_time = time.time() - self.time[i]
+    for i in range(len(cls.key)):
+        label_time = time.time() - cls.time[i]
         if label_time < label_time_max: # only display key-presses of last 2 seconds
             if label_time > (label_time_max / 1.2):
                 blf.blur(0, 1)
@@ -118,9 +118,9 @@ def draw_callback_px_text(self, context):
             blf.position(0, keypos_x, keypos_y , 0)
             alpha = min(1.0, max(0.0, label_time_max * (label_time_max - label_time)))
             bgl.glColor4f(font_color_r, font_color_g, font_color_b, font_color_alpha * alpha)
-            blf.draw(0, self.key[i])
+            blf.draw(0, cls.key[i])
             text_width, text_height = getBoundingBox(text_width, text_height,
-                self.key[i])
+                cls.key[i])
             row_count += 1
             final = i + 1
         else:
@@ -133,8 +133,8 @@ def draw_callback_px_text(self, context):
     blf.disable(0, blf.SHADOW)
 
     # get rid of status texts that aren't displayed anymore
-    self.key = self.key[:final]
-    self.time = self.time[:final]
+    cls.key = cls.key[:final]
+    cls.time = cls.time[:final]
 
     # draw graphical representation of the mouse
     if sc.screencast_keys_mouse == 'icon':
@@ -142,10 +142,10 @@ def draw_callback_px_text(self, context):
             draw_mouse(context, shape, "outline", font_color_alpha * 0.4)
         final = 0
 
-        for i in range(len(self.mouse)):
-            click_time = time.time() - self.mouse_time[i]
+        for i in range(len(cls.mouse)):
+            click_time = time.time() - cls.mouse_time[i]
             if click_time < 2:
-                shape = map_mouse_event(self.mouse[i])
+                shape = map_mouse_event(cls.mouse[i])
                 if shape:
                     alpha = min(1.0, max(0.0, 2 * (2 - click_time)))
                     draw_mouse(context, shape, "filled", alpha)
@@ -154,14 +154,13 @@ def draw_callback_px_text(self, context):
                 break
 
     # get rid of mouse clicks that aren't displayed anymore
-    self.mouse = self.mouse[:final]
-    self.mouse_time = self.mouse_time[:final]
+    cls.mouse = cls.mouse[:final]
+    cls.mouse_time = cls.mouse_time[:final]
 
-def draw_callback_px_box(self, context):
-    wm = context.window_manager
+def draw_callback_px_box(cls, context):
     sc = context.scene
 
-    if not wm.screencast_keys_keys:
+    if not dm.is_modal_running_any(context):
         return
 
     font_size  = sc.screencast_keys_font_size
@@ -181,11 +180,11 @@ def draw_callback_px_box(self, context):
     box_hide = sc.screencast_keys_box_hide
     label_time_max = sc.screencast_keys_fade_time
 
-    for i in range(len(self.key)):
-        label_time = time.time() - self.time[i]
+    for i in range(len(cls.key)):
+        label_time = time.time() - cls.time[i]
 
         if label_time < label_time_max: # only display key-presses of last 4 seconds
-            box_width, box_height = getBoundingBox(box_width, box_height, self.key[i])
+            box_width, box_height = getBoundingBox(box_width, box_height, cls.key[i])
             row_count += 1
             final = i + 1
             box_hide = False
@@ -220,13 +219,13 @@ def draw_callback_px_box(self, context):
         draw_timer(context, pos_x, pos_y)
 
     # get rid of status texts that aren't displayed anymore
-    self.key = self.key[:final]
-    self.time = self.time[:final]
+    cls.key = cls.key[:final]
+    cls.time = cls.time[:final]
 
 
-def draw_callback_px(self, context):
-    draw_callback_px_text(self, context)
-    draw_callback_px_box(self, context)
+def draw_callback_px(cls, context):
+    draw_callback_px_text(cls, context)
+    draw_callback_px_box(cls, context)
 
 
 def draw_last_operator(context, pos_x, pos_y):
@@ -506,6 +505,689 @@ def map_mouse_event(event):
 
     return(shape)
 
+
+import ctypes
+from ctypes import *
+import logging
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.WARNING)
+_handler = logging.StreamHandler()
+_handler.setLevel(logging.NOTSET)
+_formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
+_handler.setFormatter(_formatter)
+logger.addHandler(_handler)
+
+
+class Structures:
+    class ListBase(Structure):
+        """source/blender/makesdna/DNA_listBase.h: 59"""
+        _fields_ = [
+            ('first', c_void_p),
+            ('last', c_void_p)
+        ]
+
+    class wmEvent(Structure):
+        """source/blender/windowmanager/WM_types.h: 427"""
+        pass
+
+    wmEvent._fields_ = [
+        ('next', POINTER(wmEvent)),
+        ('prev', POINTER(wmEvent)),
+        ('type', c_short),
+        ('val', c_short),
+        ('click_type', c_short),
+        ('x', c_int),
+        ('y', c_int),
+        ('click_time', c_double),
+        ('mval', c_int * 2),
+        ('utf8_buf', c_char * 6),
+
+        ('ascii', c_char),
+        ('pad', c_char),
+
+        ('is_key_pressed', c_bool),
+
+        ('prevtype', c_short),
+        ('prevval', c_short),
+        ('prevx', c_int),
+        ('prevy', c_int),
+        ('prevclick_time', c_double),
+        ('prevclickx', c_int),
+        ('prevclicky', c_int),
+
+        ('shift', c_short),
+        ('ctrl', c_short),
+        ('alt', c_short),
+        ('oskey', c_short),
+        ('keymodifier', c_short),
+
+        ('keymap_idname', c_char_p),
+
+        ('tablet_data', c_void_p),  # struct wmTabletData
+
+        ('custom', c_short),
+        ('customdatafree', c_short),
+        ('pad2', c_int),
+
+        ('customdata', c_void_p),
+    ]
+
+    class wmWindow(Structure):
+        """source/blender/makesdna/DNA_windowmanager_types.h: 173"""
+        pass
+
+    if bpy.app.version == (2,74,0):
+        _drawdata = ('drawdata', c_void_p)
+    else:
+        _drawdata = ('drawdata', ListBase)
+
+    wmWindow._fields_ = [
+        ('next', POINTER(wmWindow)),
+        ('prev', POINTER(wmWindow)),
+        ('ghostwin', c_void_p),
+
+        ('screen', c_void_p),  # struct bScreen
+        ('newscreen', c_void_p),  # struct bScreen
+        ('screenname', c_char * 64),
+
+        ('posx', c_short),
+        ('posy', c_short),
+        ('sizex', c_short),
+        ('sizey', c_short),
+        ('windowstate', c_short),
+        ('monitor', c_short),
+        ('active', c_short),
+        ('cursor', c_short),
+        ('lastcursor', c_short),
+        ('modalcursor', c_short),
+        ('grabcursor', c_short),
+        ('addmousemove', c_short),
+
+        ('winid', c_int),
+
+        ('lock_pie_event', c_short),
+        ('last_pie_event', c_short),
+
+        ('eventstate', POINTER(wmEvent)),  # struct wmEvent
+
+        ('curswin', c_void_p),  # struct wmSubWindow
+
+        ('tweak', c_void_p),  # struct wmGesture
+
+        ('ime_data', c_void_p),  # struct wmIMEData
+
+        ('drawmethod', c_int),
+        ('drawfail', c_int),
+
+        _drawdata,  # FIXME: 2.74: c_void_p, master: ListBase
+
+        ('queue', ListBase),  # ListBase
+        ('handlers', ListBase),  # ListBase
+        ('modalhandlers', ListBase),  # ListBase
+
+        ('subwindows', ListBase),  # ListBase
+        ('gesture', ListBase),  # ListBase
+    ]
+
+
+    class wmOperatorType(Structure):
+        """source/blender/windowmanager/WM_types.h: 515"""
+        _fields_ = [
+            ('name', c_char_p),
+            ('idname', c_char_p),
+            ('translation_context', c_char_p),
+            ('description', c_char_p),
+        ]
+
+    class wmOperator(Structure):
+        """source/blender/makesdna/DNA_windowmanager_types.h: 341"""
+        pass
+
+    wmOperator._fields_ = [
+        ('next', POINTER(wmOperator)),
+        ('prev', POINTER(wmOperator)),
+
+        ('idname', c_char * 64),
+        ('properties', c_void_p),  # IDProperty
+
+        ('type', POINTER(wmOperatorType)),
+        ('customdata', c_void_p),
+        ('py_instance', c_void_p),  # python stores the class instance here
+
+        ('ptr', c_void_p),  # PointerRNA
+        ('reports', c_void_p),  # ReportList
+
+        ('macro', ListBase),
+        ('opm', POINTER(wmOperator)),
+        ('layout', c_void_p),  # uiLayout
+        ('flag', c_short),
+        ('pad', c_short * 3)
+    ]
+
+
+    WM_HANDLER_BLOCKING = 1 << 0
+    WM_HANDLER_DO_FREE = 1 << 1
+    WM_HANDLER_ACCEPT_DBL_CLICK = 1 << 2
+
+    class wmEventHandler(Structure):
+        """source/blender/windowmanager/wm_event_system.h: 45"""
+        pass
+
+    wmEventHandler._fields_ = [
+        ('next', POINTER(wmEventHandler)),
+        ('prev', POINTER(wmEventHandler)),  # struct wmEventHandler
+
+        ('type', c_int),
+        ('flag', c_int),
+
+        ('keymap', c_void_p),
+        ('bblocal', c_void_p),
+        ('bbwin', c_void_p),  # const rcti
+
+        ('op', POINTER(wmOperator)),
+        ('op_area', c_void_p),  # struct ScrArea
+        ('op_region', c_void_p),  # struct ARegion
+
+        # ('ui_handle', c_void_p),
+
+        # /* ui handler */
+        # wmUIHandlerFunc ui_handle;          /* callback receiving events */
+        # wmUIHandlerRemoveFunc ui_remove;    /* callback when handler is removed */
+        # void *ui_userdata;                  /* user data pointer */
+        # struct ScrArea *ui_area;            /* for derived/modal handlers */
+        # struct ARegion *ui_region;          /* for derived/modal handlers */
+        # struct ARegion *ui_menu;            /* for derived/modal handlers */
+        #
+        # /* drop box handler */
+        # ListBase *dropboxes;
+    ]
+
+
+class DaemonModal:
+    """ModalOperatorを管理する。
+    １つのOperatorのクラスに対して1つのDaemonModalインスタンスを作成する。
+    """
+    # {Window.as_pointer(): Timer, ...}
+    _render_timers = {}
+    _is_rendering = False
+
+    instances = []  # [DaemonModal, ...]
+
+    def __init__(self, operator, args=None, kwargs=None):
+        """
+        :param operator: ModalOperator e.g. 'mod.function'
+        :type operator: str
+        :param args: operator実行時に渡す引数
+        :type args: list | tuple
+        :param kwargs: operator実行時に渡す引数
+        :type kwargs: dict
+        """
+
+        # SUBMOD_OT_foo -> submod.foo
+        if '.' not in operator and '_OT_' in operator:
+            mod, func = operator.split('_OT_')
+            operator = mod.lower() + '.' + func
+
+        self.operator = operator
+        self.args = args
+        self.kwargs = kwargs
+
+        # {Window.as_pointer(): Operator, ...}
+        self._operators = {}
+
+        # 再起動指定されたものがoperatorsからこちらへ移る
+        # {Window.as_pointer(): [Operator, ...], ...}
+        self._invalid_operators = {}
+
+        # 各operatorの状態。operatorが終了してもクリアしない事
+        self._operator_flags = {}  # RESTART, AUTO_START, INVALID
+
+        # 終了時に各Windowへ送ったTimer
+        # {Window.as_pointer(): Timer, ...}
+        self._exit_timers = {}
+
+        self._flag = self.DEFAULT
+        self._is_persistent = False
+
+    DEFAULT = 0
+    AUTO_START = 1
+    RESTART = 1 << 1
+    INVALID = 1 << 2
+
+    RENDER_TIMER_STEP = 1.0 / 60  # min: 0.005s
+
+    @staticmethod
+    def operator_call(op, args=None, kwargs=None, scene_update=True):
+        from _bpy import ops as ops_module
+
+        if isinstance(op, str):
+            mod, func = op.split('.')
+            op = getattr(getattr(bpy.ops, mod), func)
+
+        BPyOpsSubModOp = op.__class__
+        op_call = ops_module.call
+        context = bpy.context
+
+        # Get the operator from blender
+        wm = context.window_manager
+
+        # run to account for any rna values the user changes.
+        if scene_update:
+            BPyOpsSubModOp._scene_update(context)
+
+        if not args:
+            args = ()
+        if not kwargs:
+            kwargs = {}
+        if args:
+            C_dict, C_exec, C_undo = BPyOpsSubModOp._parse_args(args)
+            ret = op_call(op.idname_py(), C_dict, kwargs, C_exec, C_undo)
+        else:
+            ret = op_call(op.idname_py(), None, kwargs)
+
+        if 'FINISHED' in ret and context.window_manager == wm:
+            if scene_update:
+                BPyOpsSubModOp._scene_update(context)
+
+        return ret
+
+    def _get_window_modal_handlers(self, window):
+        """ctypesを使い、windowに登録されている modal handlerのリストを返す。
+        idnameは認識できない物なら 'UNKNOWN' となる。
+        :rtype: list[(Structures.wmEventHandler, str, int, int)]
+        """
+        if not window:
+            return []
+
+        addr = window.as_pointer()
+        win = cast(c_void_p(addr), POINTER(Structures.wmWindow)).contents
+
+        handlers = []
+
+        ptr = cast(win.modalhandlers.first, POINTER(Structures.wmEventHandler))
+        while ptr:
+            handler = ptr.contents
+            area = handler.op_area  # NULLの場合はNone
+            region = handler.op_region  # NULLの場合はNone
+            idname = 'UNKNOWN'
+            if handler.op:
+                op = handler.op.contents
+                ot = op.type.contents
+                if ot.idname:
+                    idname = ot.idname.decode()
+            handlers.append((handler, idname, area, region))
+            ptr = handler.next
+        return handlers
+
+    def _to_invalid(self, addr):
+        op = self._operators.pop(addr)
+        ops = self._invalid_operators.setdefault(addr, [])
+        ops.append(op)
+        self._operator_flags[op] |= self.INVALID
+
+    @classmethod
+    def _render_init(cls, dummy):
+        """bpy.app.handlers.render_init.append(_render_init)とだけ行い、
+        他のhandlerの追加・削除はレンダリング完了／中断時に自動で行われる
+        """
+        wm = bpy.context.window_manager
+        for window in wm.windows:
+            addr = window.as_pointer()
+            if addr not in cls._render_timers:
+                timer = wm.event_timer_add(cls.RENDER_TIMER_STEP, window)
+                cls._render_timers[addr] = timer
+                logger.debug('Add timer')
+        cls._is_rendering = True
+
+        # add render handlers
+        # complete
+        render_complete = bpy.app.handlers.render_complete
+        if cls._render_complete not in render_complete:
+            render_complete.append(cls._render_complete)
+        # cancel
+        render_cancel = bpy.app.handlers.render_cancel
+        if cls._render_cancel not in render_cancel:
+            render_cancel.append(cls._render_cancel)
+
+        logger.debug('Add render complete/cancel handler')
+
+        # NOTE: BLI_callback_exec(re->main, (ID *)scene,
+        #                         BLI_CB_EVT_RENDER_INIT);
+
+    @classmethod
+    def _render_complete(cls, dummy):
+        context = bpy.context
+        wm = context.window_manager
+        while cls._render_timers:
+            addr, timer = cls._render_timers.popitem()
+            for window in wm.windows:
+                if window.as_pointer() == addr:
+                    wm.event_timer_remove(timer)
+                    logger.debug('Remove timer')
+        cls._is_rendering = False
+
+        # remove render handlers
+        # init
+        running = any([dm.is_modal_running_any(context)
+                       for dm in cls.instances])
+        if not running:
+            render_init = bpy.app.handlers.render_init
+            if cls._render_init in render_init:
+                render_init.remove(cls._render_init)
+        # complete
+        render_complete = bpy.app.handlers.render_complete
+        if cls._render_complete in render_complete:
+            render_complete.remove(cls._render_complete)
+        # cancel
+        render_cancel = bpy.app.handlers.render_cancel
+        if cls._render_cancel in render_cancel:
+            render_cancel.remove(cls._render_cancel)
+        logger.debug('Remove render handlers')
+
+    @classmethod
+    def _render_cancel(cls, dummy):
+        cls._render_complete(dummy)
+
+    @staticmethod
+    def _auto_start(context, dm):
+        """
+        :type dm: DaemonModal
+        """
+        window = context.window
+
+        addr = window.as_pointer()
+        auto_start = restart = False
+        op_area_ptr = op_region_ptr = None
+
+        if addr not in dm._operators:
+            # Auto Start (new window created)
+            auto_start = True
+            handlers = dm._get_window_modal_handlers(window)
+        else:
+            # Restart (other modal operator started)
+            handlers = dm._get_window_modal_handlers(window)
+            for handler, idname, area_p, region_p in handlers:
+                if '.' not in idname and '_OT_' in idname:
+                    mod, func = idname.split('_OT_')
+                    idname_py = mod.lower() + '.' + func
+                else:
+                    idname_py = idname
+                if idname_py == dm.operator:
+                    op_area_ptr = area_p
+                    op_region_ptr = region_p
+                    break
+                else:
+                    for dm_ in dm.instances:
+                        if idname_py == dm_.operator:
+                            break
+                    else:
+                        restart = True
+
+            if restart:
+                dm._to_invalid(addr)
+
+        # Call operator
+        if auto_start or restart:
+            override = op_context = undo = None
+            if dm.args:
+                for arg in dm.args:
+                    if isinstance(arg, dict):
+                        override = arg
+                    elif isinstance(arg, str):
+                        op_context = arg
+                    elif isinstance(arg, bool):
+                        undo = arg
+
+            # operator context
+            if not op_context or not op_context.startswith('INVOKE'):
+                op_context = 'INVOKE_DEFAULT'
+            # merge
+            args = []
+            for value in (override, op_context, undo):
+                if value is not None:
+                    args.append(value)
+
+            # Call invoke()
+            dm._flag = dm.AUTO_START if auto_start else dm.RESTART
+            r = dm.operator_call(dm.operator, args, dm.kwargs,
+                                 scene_update=False)
+            dm._flag = dm.DEFAULT
+
+            # Set Handler Area & Region
+            # 安全の為慎重に進める
+            if op_area_ptr or op_region_ptr:
+                if {'RUNNING_MODAL'} & r and not {'FINISHED', 'CANCELLED'} & r:
+                    handlers_prev = handlers
+                    handlers = dm._get_window_modal_handlers(window)
+                    if len(handlers) == len(handlers_prev) + 1:
+                        handler, idname, area_p, region_p = handlers[0]
+                        if handler.op:
+                            if '.' not in idname and '_OT_' in idname:
+                                mod, func = idname.split('_OT_')
+                                idname_py = mod.lower() + '.' + func
+                            else:
+                                idname_py = idname
+                            if idname_py == dm.operator:
+                                if op_area_ptr:
+                                    handler.op_area = op_area_ptr
+                                if op_region_ptr:
+                                    handler.op_region = op_region_ptr
+                                    logger.debug(
+                                        'Set wmEventHandler.op_region, '
+                                        'wmEventHandler.op_area')
+
+    @classmethod
+    def _scene_update_pre(cls, scn):
+        """新規windowへの起動及び再起動"""
+        context = bpy.context
+        window = context.window
+        screen = context.screen
+        scene = context.scene
+
+        if not cls._remove_handler(force=False):
+            for dm in cls.instances:
+                if dm.is_modal_running_any(context):
+                    if (window and screen and scene and
+                            screen == window.screen and
+                            scene == screen.scene == scn):
+                        # メインループなら必ずこれが一致する
+                        dm._auto_start(context, dm)
+
+    @classmethod
+    def _add_handler(cls):
+        # Scene
+        handlers = bpy.app.handlers.scene_update_pre
+        if cls._scene_update_pre not in handlers:
+            handlers.append(cls._scene_update_pre)
+            logger.debug('Add scene handler')
+
+        # Render
+        handlers = bpy.app.handlers.render_init
+        if cls._render_init not in handlers:
+            handlers.append(cls._render_init)
+            logger.debug('Add render int handler')
+
+    @classmethod
+    def _remove_handler(cls, force=False):
+        context = bpy.context
+        running = any([dm.is_modal_running_any(context)
+                       for dm in cls.instances])
+        if force or not running:
+            # Scene
+            handlers = bpy.app.handlers.scene_update_pre
+            if cls._scene_update_pre in handlers:
+                handlers.remove(cls._scene_update_pre)
+                logger.debug('Remove scene handler')
+            # Render
+            handlers = bpy.app.handlers.render_init
+            if cls._render_init in handlers:
+                handlers.remove(cls._render_init)
+                logger.debug('Remove render int handler')
+            return True
+        else:
+            return False
+
+    def is_auto_start(self, operator):
+        """operatorが新規windowで自動起動したものなら真を返す
+        """
+        if operator in self._operator_flags:
+            return bool(self._operator_flags[operator] & self.AUTO_START)
+        else:
+            # 新規オペレータでDaemonModal.invoke()呼び出し前と見做す
+            return bool(self._flag & self.AUTO_START)
+
+    def is_valid(self, operator):
+        """operatorの再起動により不要となったもの、exit()で終了待ち、
+        windowが閉じられたものなら偽を返す
+        """
+        context = bpy.context
+        wm = context.window_manager
+        adrrs = {win.as_pointer() for win in wm.windows}
+        # 実行中でwindowが有効なら真
+        for addr, op in self._operators.items():
+            if op == operator:
+                if addr in adrrs:
+                    return True
+                else:
+                    return False
+        # フラグで判定
+        if operator in self._operator_flags:
+            return bool(self._operator_flags[operator] & self.INVALID != 0)
+        else:
+            # 新規オペレータでDaemonModal.invoke()呼び出し前と見做す
+            return True
+
+    def is_restart(self, operator):
+        """operatorが再起動により開始されたものなら真を返す"""
+        if operator in self._operator_flags:
+            return bool(self._operator_flags[operator] & self.RESTART)
+        else:
+            # 新規オペレータでDaemonModal.invoke()呼び出し前と見做す
+            return bool(self._flag & self.RESTART)
+
+    def is_modal_running(self, context, window=None):
+        """有効なoperatorが実行中なら真を返す。
+        self.invalid_operatorsは無視する。handlerの有無は確認しない。
+        """
+        if window:
+            if window not in context.window_manager.windows:
+                return False
+        else:
+            window = context.window
+        return window.as_pointer() in self._operators
+
+    def is_modal_running_any(self, context):
+        """全てのWindowで一つでも有効なoperatorが実行中ならなら真を返す。
+        self.invalid_operatorsは無視する。handlerの有無は確認しない。
+        """
+        wm = context.window_manager
+        win_addr = {win.as_pointer() for win in wm.windows}
+        op_addr = set(self._operators)
+        return bool(win_addr & op_addr)
+
+    def modal(self, context, operator):
+        """modalで呼ぶ。これが偽を返すならそのoperatorは不要となっているので
+        何もせずに修了する事。
+        """
+        if self._exit_invalid(context, operator):
+            return False
+        else:
+            if self._is_rendering:
+                wm = context.window_manager
+                for window in wm.windows:
+                    addr = window.as_pointer()
+                    if addr not in self._render_timers:
+                        timer = wm.event_timer_add(self.RENDER_TIMER_STEP,
+                                                   window)
+                        self._render_timers[addr] = timer
+                        logger.debug('Add timer')
+                self._auto_start(context, self)
+            return True
+
+    def invoke(self, context, operator):
+        """invokeで modal operatorを開始する時に呼ぶ。'CANCELLED' や 'FINISHED'
+        では呼ばない事。
+        """
+        window = context.window
+        addr = window.as_pointer()
+        if addr in self._operators:
+            return False
+        self._add_handler()
+        self._operators[addr] = operator
+        self._operator_flags[operator] = self._flag
+        self.instances.append(self)
+
+        if self._flag == self.RESTART:
+            msg = "Restart '{}'"
+        elif self._flag == self.AUTO_START:
+            msg = "AutoStart '{}'"
+        else:
+            msg = "Start '{}'"
+        logger.debug(msg.format(self.operator))
+
+        return True
+
+    def _exit_invalid(self, context, operator):
+        """そのoperatorが不要となっていたら取り除いて真を返す"""
+        removed = False
+        wm = context.window_manager
+        window = context.window
+        addr = window.as_pointer()
+        # Operator削除
+        if addr in self._invalid_operators:
+            ops = self._invalid_operators[addr]
+            if operator in ops:
+                ops.remove(operator)
+                removed = True
+                logger.debug('Exit Invalid: {}'.format(self))
+            if not ops:
+                del self._invalid_operators[addr]
+
+        # Timer削除
+        if addr in self._exit_timers:
+            if (addr not in self._operators or
+                    addr not in self._invalid_operators):
+                wm.event_timer_remove(self._exit_timers[addr])
+                logger.debug('Remove exit timer')
+        # Handler削除
+        if not self.is_modal_running_any(context):
+            self._remove_handler(force=False)
+        return removed
+
+    def exit(self, context, operator=None):
+        """'operator終了時に呼ぶ'"""
+        wm = context.window_manager
+
+        # 全windowに対してイベントを発生させそのオペレータに
+        # INVALIDフラグを付ける
+        for window in wm.windows:
+            addr = window.as_pointer()
+            if addr in self._operators:
+                self._to_invalid(addr)
+                timer = wm.event_timer_add(0.0, window)
+                self._exit_timers[addr] = timer
+
+        # operator削除
+        if operator:
+            for addr, ops in list(self._invalid_operators.items()):
+                for op in ops:
+                    if op == operator:
+                        ops.remove(op)
+                    if not ops:
+                        del self._invalid_operators[addr]
+                        wm.event_timer_remove(self._exit_timers[addr])
+
+        # Handler削除
+        self._remove_handler(force=False)
+
+        # 管理対象から外す
+        self.instances.remove(self)
+
+
+dm = DaemonModal('view3d.screencast_keys')
+
+
 class ScreencastKeysStatus(bpy.types.Operator):
     bl_idname = "view3d.screencast_keys"
     bl_label = "Screencast Keys"
@@ -515,33 +1197,57 @@ class ScreencastKeysStatus(bpy.types.Operator):
     _handle = None
     _timer = None
 
+    key = []
+    time = []
+    mouse = []
+    mouse_time = []
+
+    overall_time = []
+
+    TIMER_STEP = 0.075
+    prev_time = 0.0
+
     @staticmethod
     def handle_add(self, context):
-        ScreencastKeysStatus._handle = bpy.types.SpaceView3D.draw_handler_add(draw_callback_px, (self, context), 'WINDOW', 'POST_PIXEL')
-        ScreencastKeysStatus._timer = context.window_manager.event_timer_add(0.075, context.window)
+        cls = ScreencastKeysStatus
+        cls._handle = bpy.types.SpaceView3D.draw_handler_add(draw_callback_px, (cls, context), 'WINDOW', 'POST_PIXEL')
+        cls._timer = context.window_manager.event_timer_add(self.TIMER_STEP, context.window)
 
     @staticmethod
     def handle_remove(context):
-        if ScreencastKeysStatus._handle is not None:
-            context.window_manager.event_timer_remove(ScreencastKeysStatus._timer)
-            bpy.types.SpaceView3D.draw_handler_remove(ScreencastKeysStatus._handle, 'WINDOW')
-        ScreencastKeysStatus._handle = None
-        ScreencastKeysStatus._timer = None
+        cls = ScreencastKeysStatus
+        if cls._handle is not None:
+            bpy.types.SpaceView3D.draw_handler_remove(cls._handle, 'WINDOW')
+            cls._handle = None
+        if cls._timer is not None:
+            context.window_manager.event_timer_remove(cls._timer)
+            cls._timer = None
 
     def modal(self, context, event):
-        if context.area:
-            context.area.tag_redraw()
+        if not dm.modal(context, self):
+            return {'CANCELLED'}
 
-        if event.type == 'TIMER':
+        if event.type in ('MOUSEMOVE', 'INBETWEEN_MOUSEMOVE'):
+            if (event.mouse_x == event.mouse_prev_x and
+                    event.mouse_y == event.mouse_prev_y):
+                return {'PASS_THROUGH'}
+
+        if event.type != 'TIMER' or time.time() - self.prev_time > self.TIMER_STEP:
+            for area in context.screen.areas:
+                if area.type == 'VIEW_3D':
+                    area.tag_redraw()
+            self.prev_time = time.time()
+
+        if event.type.startswith('TIMER') or event.type == 'WINDOW_DEACTIVATE':
             # no input, so no need to change the display
             return {'PASS_THROUGH'}
 
         scene = context.scene
         # keys that shouldn't show up in the 3D View
-        mouse_keys = ['MOUSEMOVE','MIDDLEMOUSE','LEFTMOUSE',
+        mouse_keys = ['MIDDLEMOUSE','LEFTMOUSE',
          'RIGHTMOUSE', 'WHEELDOWNMOUSE','WHEELUPMOUSE']
         ignore_keys = ['LEFT_SHIFT', 'RIGHT_SHIFT', 'LEFT_ALT',
-         'RIGHT_ALT', 'LEFT_CTRL', 'RIGHT_CTRL', 'TIMER',
+         'RIGHT_ALT', 'LEFT_CTRL', 'RIGHT_CTRL', 'OSKEY', 'TIMER',
          'MOUSEMOVE', 'INBETWEEN_MOUSEMOVE']
         if scene.screencast_keys_mouse != 'text':
             ignore_keys.extend(mouse_keys)
@@ -592,44 +1298,47 @@ class ScreencastKeysStatus(bpy.types.Operator):
                 self.last_activity = 'KEYBOARD'
             #print("Last activity set to:", self.last_activity)
 
-        if not context.window_manager.screencast_keys_keys:
-            # stop script
-            ScreencastKeysStatus.handle_remove(context)
-            return {'CANCELLED'}
+        # if not dm.is_modal_running_any(context):
+        #     # stop script
+        #     ScreencastKeysStatus.handle_remove(context)
+        #     return {'CANCELLED'}
 
         return {'PASS_THROUGH'}
 
-    def cancel(self, context):
-        if context.window_manager.screencast_keys_keys:
-            ScreencastKeysStatus.handle_remove(context)
-            context.window_manager.screencast_keys_keys = False
+    # def cancel(self, context):
+    #     if not dm.is_modal_running_any(context):
+    #         ScreencastKeysStatus.handle_remove(context)
+
+    def init(self):
+        cls = self.__class__
+        cls.key.clear()
+        cls.time.clear()
+        cls.mouse.clear()
+        cls.mouse_time.clear()
+        cls.overall_time.clear()
+        cls.prev_time = time.time()
 
     def invoke(self, context, event):
-        if context.area.type == 'VIEW_3D':
-            if context.window_manager.screencast_keys_keys is False:
-                # operator is called for the first time, start everything
-                context.window_manager.screencast_keys_keys = True
-                self.key = []
-                self.time = []
-                self.mouse = []
-                self.mouse_time = []
-                ScreencastKeysStatus.overall_time = []
+        # if context.area.type == 'VIEW_3D':
+        if dm.invoke(context, self):
+            # operator is called for the first time, start everything
+            if not dm.is_restart(self) and not dm.is_auto_start(self):
+                self.init()
                 ScreencastKeysStatus.handle_add(self, context)
                 ScreencastKeysStatus.overall_time.insert(0, time.time())
-                context.window_manager.modal_handler_add(self)
-                return {'RUNNING_MODAL'}
-            else:
-                # operator is called again, stop displaying
-                context.window_manager.screencast_keys_keys = False
-                self.key = []
-                self.time = []
-                self.mouse = []
-                self.mouse_time = []
-                ScreencastKeysStatus.overall_time = []
-                return {'CANCELLED'}
+            context.window_manager.modal_handler_add(self)
+
+            return {'RUNNING_MODAL'}
         else:
-            self.report({'WARNING'}, "3D View not found, can't run Screencast Keys")
+            # operator is called again, stop displaying
+            self.init()
+            dm.exit(context, self)
+            ScreencastKeysStatus.handle_remove(context)
             return {'CANCELLED'}
+        # else:
+        #     self.report({'WARNING'}, "3D View not found, can't run Screencast Keys")
+        #     return {'CANCELLED'}
+
 
 class ScreencastKeysTimerReset(bpy.types.Operator):
     """Reset Timer"""
@@ -645,7 +1354,6 @@ class ScreencastKeysTimerReset(bpy.types.Operator):
 # properties used by the script
 def init_properties():
     scene = bpy.types.Scene
-    wm = bpy.types.WindowManager
 
     scene.screencast_keys_pos_x = bpy.props.IntProperty(
         name="Position X",
@@ -742,15 +1450,10 @@ def init_properties():
         subtype='COLOR',
         size=4)
 
-    # Runstate initially always set to False
-    # note: it is not stored in the Scene, but in window manager:
-    wm.screencast_keys_keys = bpy.props.BoolProperty(default=False)
-
 
 # removal of properties when script is disabled
 def clear_properties():
     props = (
-        "screencast_keys_keys",
         "screencast_keys_mouse",
         "screencast_keys_font_size",
         "screencast_keys_mouse_size",
@@ -786,7 +1489,7 @@ class OBJECT_PT_keys_status(bpy.types.Panel):
         wm = context.window_manager
         layout = self.layout
 
-        if not wm.screencast_keys_keys:
+        if not dm.is_modal_running_any(context):
             layout.operator("view3d.screencast_keys", text="Start Display",
                 icon = "PLAY")
         else:
