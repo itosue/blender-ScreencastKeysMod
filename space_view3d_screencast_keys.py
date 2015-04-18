@@ -48,12 +48,20 @@ def getDisplayLocation(context):
     pref = get_pref(context)
     mouse_size = pref.mouse_size
 
-    pos_x = int( (context.region.width  - mouse_size * MOUSE_RATIO) * \
-        pref.pos_x / 100)
-    pos_y = int( (context.region.height - mouse_size) *
-        pref.pos_y / 100)
+    regions = [ar for ar in context.area.regions if ar.type == 'WINDOW']
+    i = regions.index(context.region)
+    if i >= 2:  # 右下、右上
+        return -1, -1
 
-    return(pos_x, pos_y)
+    pos_x = int( (context.region.width - mouse_size * MOUSE_RATIO) *
+                pref.pos_x / 100)
+    pos_y = int( (context.region.height - mouse_size) *
+                pref.pos_y / 100)
+
+    if i == 1:
+        pos_y -= context.region.height
+
+    return pos_x, pos_y
 
 
 def getBoundingBox(current_width, current_height, new_text):
@@ -67,13 +75,15 @@ def getBoundingBox(current_width, current_height, new_text):
 
 def draw_callback_px_text(cls, context):
     pref = get_pref(context)
-    if not mm.is_running():
+    if not mm.is_running(context):
         return
 
     font_size  = pref.font_size
     mouse_size = pref.mouse_size
     box_draw   = pref.box_draw
     pos_x, pos_y = getDisplayLocation(context)
+    if pos_x == pos_y == -1:
+        return
     label_time_max = pref.fade_time
 
     # draw text in the 3D View
@@ -160,7 +170,7 @@ def draw_callback_px_text(cls, context):
 def draw_callback_px_box(cls, context):
     pref = get_pref(context)
 
-    if not mm.is_running():
+    if not mm.is_running(context):
         return
 
     font_size  = pref.font_size
@@ -171,6 +181,8 @@ def draw_callback_px_box(cls, context):
 
     box_draw   = pref.box_draw
     pos_x, pos_y = getDisplayLocation(context)
+    if pos_x == pos_y == -1:
+        return
 
     # get text-width/height to resize the box
     blf.size(0, pref.font_size, 72)
@@ -224,6 +236,10 @@ def draw_callback_px_box(cls, context):
 
 
 def draw_callback_px(cls, context):
+    window = context.window
+    space = context.space_data
+    if window != cls.window or space != cls.space:
+        return
     draw_callback_px_text(cls, context)
     draw_callback_px_box(cls, context)
 
@@ -568,7 +584,7 @@ class Structures:
 
         ('keymap_idname', c_char_p),
 
-        ('tablet_data', c_void_p),  # struct wmTabletData
+        ('tablet_data', c_void_p),  # const struct wmTabletData
 
         ('custom', c_short),
         ('customdatafree', c_short),
@@ -708,37 +724,6 @@ class Structures:
 ###############################################################################
 # ModalHandlerManager
 ###############################################################################
-class Switcher:
-    def __init__(self, addr, operator=None):
-        self.addr = addr
-        self.operator = operator
-
-    def is_running(self):
-        context = bpy.context
-        wm = context.window_manager
-        addrs = {win.as_pointer() for win in wm.windows}
-        if self.addr in addrs:
-            if self.operator:
-                return True
-        return False
-
-    def modal(self, context, operator):
-        if context.window.as_pointer() != self.addr:
-            return True
-        # 継続
-        if operator == self.operator:
-            return True
-        # 終了
-        else:
-            return False
-
-    def start(self, operator):
-        self.operator = operator
-
-    def exit(self):
-        self.operator = None
-
-
 class ModalHandlerManager:
     """
     常時バックグラウンドで動作する({'PASS_THROUGH'}を返す)ようなModalOperator
@@ -754,9 +739,13 @@ class ModalHandlerManager:
     必要に応じてオペレータを再起動するので、インスタンス属性・bpy.propsを用いた
     プロパティへの変更は無駄となる。クラス属性を使うか、get,set関数を使った
     bpy.propsのプロパティを用いる事。
+
+    基本的にこのクラスを継承して使用しない事。
+    レンダリング時のタイマーをクラス属性で管理している為、これを継承した複数の
+    クラスを同時に使用した場合、その分レンダリング時のタイマー発生が増える。
     """
 
-    RENDER_TIMER_STEP = 1.0 / 60  # min: 0.005s
+    RENDERING_TIMER_STEP = 1.0 / 60  # min: 0.005s
 
     _render_timers = {}
     _is_rendering = False
@@ -766,16 +755,30 @@ class ModalHandlerManager:
 
     NORMAL = 0
     RESTART = 1
-    AUTO_RUN = 2
+    AUTO_START = 2
 
-    def __init__(self, idname, args=('INVOKE_DEFAULT',), kwargs=None):
+    def __init__(self, idname, restart=True, all_windows=True, callback=None,
+                 args=('INVOKE_DEFAULT',), kwargs=None,
+                 render_timer_step=RENDERING_TIMER_STEP):
         """
         :param idname: ModalOperator e.g. 'mod.function'
         :type idname: str
+        :param restart: handlerが先頭でないなら再起動
+        :type restart: bool
+        :param all_windows: 新規Windowに対して自動でオペレータを起動し、
+            ModalHandlerを追加する。
+        :type all_windows: bool
+        :param callback: 再起動・自動起動の際に実行。
+            第一引数にcontext, 第ニ引数に新規operator。
+            再起動の場合は第三引数にそのwindowで動作中のoperator、
+            自動起動の場合は第三引数はNoneとなる。
+        :type callback: collections.abc.Callable
         :param args: operator実行時に渡す引数
         :type args: list | tuple
         :param kwargs: operator実行時に渡す引数
         :type kwargs: dict
+        :param render_timer_step:
+        :type render_timer_step: float
         """
 
         # SUBMOD_OT_foo -> submod.foo
@@ -786,13 +789,21 @@ class ModalHandlerManager:
         self.idname = idname
         self.args = args
         self.kwargs = kwargs
+        self.restart = restart
+        self.all_windows = all_windows
 
-        self.switchers = {}
-        """:type: dict[int, Switcher]"""
+        self.callback = callback
+        self.render_timer_step = render_timer_step
+
+        # 値がNoneとなるのはinvoke()の時のみ
+        self.operators = {}
+        """:type: dict[int, T]"""
 
         self._exit_timers = {}
 
         self.status = self.NORMAL
+
+        self.managers.append(self)
 
     def _get_window_modal_handlers(self, window):
         """ctypesを使い、windowに登録されている modal handlerのリストを返す。
@@ -860,14 +871,10 @@ class ModalHandlerManager:
 
         return ret
 
-    @staticmethod
-    def _parse_args(context, m, override_context=None):
-        """
-        :type m: ModalHandlerManager
-        """
+    def _parse_args(self, context, override_context=None):
         override = op_context = undo = None
-        if m.args:
-            for arg in m.args:
+        if self.args:
+            for arg in self.args:
                 if isinstance(arg, dict):
                     override = arg
                 elif isinstance(arg, str):
@@ -893,19 +900,15 @@ class ModalHandlerManager:
 
         return args
 
-    @staticmethod
-    def _restart(context, m, window):
-        """
-        :type m: ModalHandlerManager
-        """
+    def _restart_do(self, context, window):
+        """必要無ければ再起動を行わない"""
         addr = window.as_pointer()
-
-        if addr not in m.switchers:
+        if addr not in self.operators:
             return
 
         restart = False
         op_area_ptr = op_region_ptr = None
-        handlers = m._get_window_modal_handlers(window)
+        handlers = self._get_window_modal_handlers(window)
         for handler, idname, area_p, region_p in handlers:
             if idname == 'UNKNOWN':
                 continue
@@ -914,13 +917,13 @@ class ModalHandlerManager:
                 idname_py = mod.lower() + '.' + func
             else:
                 idname_py = idname
-            if idname_py == m.idname:
+            if idname_py == self.idname:
                 op_area_ptr = cast(area_p, c_void_p)
                 op_region_ptr = cast(region_p, c_void_p)
                 break
             else:
-                for m_ in m.managers:
-                    if idname_py == m_.idname:
+                for m in self.managers:
+                    if idname_py == m.idname:
                         break
                 else:
                     restart = True
@@ -930,17 +933,18 @@ class ModalHandlerManager:
 
         # Call invoke()
         logger.debug('Restart')
-        args = m._parse_args(context, m)
-        m.status = m.RESTART
-        r = m._operator_call(m.idname, args, m.kwargs, scene_update=False)
-        m.status = m.NORMAL
+        args = self._parse_args(context)
+        self.status = self.RESTART
+        r = self._operator_call(self.idname, args, self.kwargs,
+                                scene_update=False)
+        self.status = self.NORMAL
 
         # Set Handler Area & Region
         # 安全の為慎重に進める
         if op_area_ptr or op_region_ptr:
             if {'RUNNING_MODAL'} & r and not {'FINISHED', 'CANCELLED'} & r:
                 handlers_prev = handlers
-                handlers = m._get_window_modal_handlers(window)
+                handlers = self._get_window_modal_handlers(window)
                 if len(handlers) == len(handlers_prev) + 1:
                     handler, idname, _area_p, _region_p = handlers[0]
                     if handler.op:
@@ -949,7 +953,7 @@ class ModalHandlerManager:
                             idname_py = mod.lower() + '.' + func
                         else:
                             idname_py = idname
-                        if idname_py == m.idname:
+                        if idname_py == self.idname:
                             if op_area_ptr:
                                 handler.op_area = op_area_ptr
                             if op_region_ptr:
@@ -958,13 +962,10 @@ class ModalHandlerManager:
                                     'Set wmEventHandler.op_region, '
                                     'wmEventHandler.op_area')
 
-    @staticmethod
-    def _auto_start(context, m, window):
-        """
-        :type m: ModalHandlerManager
-        """
+    def _auto_start_do(self, context, window):
+        """必要無ければ自動起動を行わない"""
         addr = window.as_pointer()
-        if addr in m.switchers:
+        if addr in self.operators:
             return
 
         override = {}
@@ -977,48 +978,71 @@ class ModalHandlerManager:
             override['scene'] = window.screen.scene
             override['area'] = None
             override['region'] = None
-        args = m._parse_args(context, m, override)
+        args = self._parse_args(context, override)
 
         # Call invoke()
         logger.debug('Auto Start')
-        m.status = m.AUTO_RUN
-        m._operator_call(m.idname, args, m.kwargs, scene_update=False)
-        m.status = m.AUTO_RUN
+        self.status = self.AUTO_START
+        self._operator_call(self.idname, args, self.kwargs, scene_update=False)
+        self.status = self.NORMAL
 
     @classmethod
     def _scene_update_pre(cls, scn):
-        """新規windowへの起動及び再起動"""
+        """再起動及び新規windowへの自動起動"""
         context = bpy.context
         window = context.window
         screen = context.screen
         scene = context.scene
         if not window:
             return
+
         addr = window.as_pointer()
-        if not cls._remove_handlers():
-            for m in cls.managers:
-                if m.is_running():
-                    if addr not in m.switchers:
+        running_any = False
+        for m in cls.managers:
+            m._cleanup(context)
+            if m.is_running(context):
+                running_any = True
+                if addr in m.operators:
+                    if m.restart:
+                        m._restart_do(context, window)
+                else:
+                    if m.all_windows:
                         if (window and screen and scene and
                                 screen == window.screen and
                                 scene == screen.scene == scn):
                             # メインループなら必ずこれが一致する
-                            m._auto_start(context, m, window)
-                    else:
-                        m._restart(context, m, window)
+                            m._auto_start_do(context, window)
+        if not running_any:
+            handlers = bpy.app.handlers.scene_update_pre
+            if cls._scene_update_pre in handlers:
+                handlers.remove(cls._scene_update_pre)
+                logger.debug('Remove scene handler')
+
+    @classmethod
+    def _render_timer_add(cls):
+        context = bpy.context
+        wm = context.window_manager
+
+        steps = [m.render_timer_step for m in cls.managers
+                 if m.is_running(context)]
+        if not steps or set(steps) == {0.0}:
+            return
+        else:
+            step = min([f for f in steps if f != 0.0])
+
+        for window in wm.windows:
+            addr = window.as_pointer()
+            if addr not in cls._render_timers:
+                timer = wm.event_timer_add(step, window)
+                cls._render_timers[addr] = timer
+                logger.debug('Add timer')
 
     @classmethod
     def _render_init(cls, dummy):
         """bpy.app.handlers.render_init.append(_render_init)とだけ行い、
         他のhandlerの追加・削除はレンダリング完了／中断時に自動で行われる
         """
-        wm = bpy.context.window_manager
-        for window in wm.windows:
-            addr = window.as_pointer()
-            if addr not in cls._render_timers:
-                timer = wm.event_timer_add(cls.RENDER_TIMER_STEP, window)
-                cls._render_timers[addr] = timer
-                logger.debug('Add timer')
+        cls._render_timer_add()
         cls._is_rendering = True
 
         # add render handlers
@@ -1040,17 +1064,15 @@ class ModalHandlerManager:
     def _render_complete(cls, dummy):
         context = bpy.context
         wm = context.window_manager
-        while cls._render_timers:
-            addr, timer = cls._render_timers.popitem()
-            for window in wm.windows:
-                if window.as_pointer() == addr:
-                    wm.event_timer_remove(timer)
-                    logger.debug('Remove timer')
+        for timer in cls._render_timers.values():
+            wm.event_timer_remove(timer)
+            logger.debug('Remove timer')
+        cls._render_timers.clear()
         cls._is_rendering = False
 
         # remove render handlers
         # init
-        running = any([m.is_running() for m in cls.managers])
+        running = any([m.is_running(context) for m in cls.managers])
         if not running:
             render_init = bpy.app.handlers.render_init
             if cls._render_init in render_init:
@@ -1071,6 +1093,7 @@ class ModalHandlerManager:
 
     @classmethod
     def _add_handlers(cls):
+        # 削除は自動
         # Scene
         handlers = bpy.app.handlers.scene_update_pre
         if cls._scene_update_pre not in handlers:
@@ -1084,62 +1107,96 @@ class ModalHandlerManager:
             logger.debug('Add render int handler')
 
     @classmethod
-    def _remove_handlers(cls):
-        running = any([m.is_running() for m in cls.managers])
-        if not running:
-            # Scene
-            handlers = bpy.app.handlers.scene_update_pre
-            if cls._scene_update_pre in handlers:
-                handlers.remove(cls._scene_update_pre)
-                logger.debug('Remove scene handler')
-            # Render
-            handlers = bpy.app.handlers.render_init
-            if cls._render_init in handlers:
-                handlers.remove(cls._render_init)
-                logger.debug('Remove render int handler')
-            return True
-        return False
+    def terminate(cls):
+        """handler,timer,operator全てを強制削除"""
+        context = bpy.context
+        wm = context.window_manager
 
-    def _exit(self, context):
+        # Scene update handler
+        handlers = bpy.app.handlers.scene_update_pre
+        if cls._scene_update_pre in handlers:
+            handlers.remove(cls._scene_update_pre)
+
+        # Render handlers
+        render_init = bpy.app.handlers.render_complete
+        if cls._render_init in render_init:
+            render_init.remove(cls._render_init)
+        render_complete = bpy.app.handlers.render_complete
+        if cls._render_complete in render_complete:
+            render_complete.remove(cls._render_complete)
+        render_cancel = bpy.app.handlers.render_cancel
+        if cls._render_cancel in render_cancel:
+            render_cancel.remove(cls._render_cancel)
+        logger.debug('Remove render handlers')
+
+        # Render timers
+        for timer in cls._render_timers.values():
+            wm.event_timer_remove(timer)
+        cls._render_timers.clear()
+
+        # operators, exit_timers
+        for m in cls.managers:
+            m.operators.clear()
+            for timer in m._exit_timers.values():
+                wm.event_timer_remove(timer)
+            m._exit_timers.clear()
+            m.status = m.NORMAL
+
+    def _exit(self, context, window=None):
+        """self.all_windowsが真の場合は全てのoperatorを、そうでないなら
+        context.windowのoperatorのみを修了させる。
+        """
+        wm = context.window_manager
+        if window:
+            addr = window.as_pointer()
+            if addr in self.operators:
+                if addr not in self._exit_timers:
+                    timer = wm.event_timer_add(0.0, window)
+                    self._exit_timers[addr] = timer
+                del self.operators[addr]
+        else:
+            for window in wm.windows:
+                addr = window.as_pointer()
+                if addr in self.operators and addr not in self._exit_timers:
+                    timer = wm.event_timer_add(0.0, window)
+                    self._exit_timers[addr] = timer
+            self.operators.clear()
+
+    def _cleanup(self, context):
+        """無効なwindowのoperatorとexit_timerの削除"""
+        wm = context.window_manager
+        addrs = {win.as_pointer() for win in wm.windows}
+        for addr in list(self.operators.keys()):
+            if addr not in addrs:
+                del self.operators[addr]
+
+        if self._exit_timers:
+            for addr in list(self._exit_timers.keys()):
+                if addr not in addrs:
+                    wm.event_timer_remove(self._exit_timers.pop(addr))
+
+        if not self.operators:
+            self.status = self.NORMAL
+
+    def is_running(self, context, window=None):
+        wm = context.window_manager
+        if window:
+            return window.as_pointer() in self.operators
+        else:
+            addrs = {win.as_pointer() for win in wm.windows}
+            if addrs & set(self.operators.keys()):
+                return True
+            else:
+                return False
+
+    @staticmethod
+    def active_window(context):
         wm = context.window_manager
         for window in wm.windows:
             addr = window.as_pointer()
-            if addr in self.switchers:
-                timer = wm.event_timer_add(0.0, window)
-                self._exit_timers[addr] = timer
-        for switcher in self.switchers.values():
-            switcher.exit()
-        self.switchers.clear()
-
-        self._remove_handlers()
-        self.managers.remove(self)
-        self.status = self.NORMAL
-
-    def _cleanup(self, context):
-        wm = context.window_manager
-        addrs = {win.as_pointer() for win in wm.windows}
-        for addr, switcher in list(self.switchers.items()):
-            delete = False
-            if addr in addrs:
-                if not switcher.operator:
-                    delete = True
-            else:
-                delete = True
-            if delete:
-                del self.switchers[addr]
-        if self._exit_timers:
-            for timer in self._exit_timers.values():
-                wm.event_timer_remove(timer)
-            self._exit_timers.clear()
-
-    def is_running(self):
-        for switcher in self.switchers.values():
-            if switcher.is_running():
-                return True
-        return False
-
-    # def is_auto_run(self):
-    #     return self.status in (self.RESTART, self.AUTO_RUN)
+            win = cast(c_void_p(addr), POINTER(Structures.wmWindow)).contents
+            if win.active:
+                return window
 
     def modal(self, func):
         @functools.wraps(func)
@@ -1150,34 +1207,33 @@ class ModalHandlerManager:
 
             self._cleanup(context)
 
-            if addr not in self.switchers:
+            if addr in self._exit_timers:
+                wm.event_timer_remove(self._exit_timers.pop(addr))
+
+            if addr not in self.operators or self.operators[addr] != self_:
+                logger.debug('Unnecessary operator cancelled')
                 return {'CANCELLED', 'PASS_THROUGH'}
 
-            switcher = self.switchers[addr]
-            if switcher.modal(context, self_):
-                r = func(self_, context, event)
-                if r & {'FINISHED', 'CANCELLED'}:
-                    self._exit(context)
-                else:
-                    if self._is_rendering:
-                        # Restart
-                        self._restart(context, self, window)
-                        # Auto Start
+            r = func(self_, context, event)
+            if r & {'FINISHED', 'CANCELLED'}:
+                win = None if self.all_windows else context.window
+                self._exit(context, win)
+            else:
+                if self._is_rendering:
+                    # レンダリング中はscene_updateが行われない為、
+                    # restart,auto_startはここで行う
+                    # Restart
+                    if self.restart:
+                        self._restart_do(context, window)
+                    # Auto Start
+                    if self.all_windows:
                         for window in wm.windows:
                             if window != context.window:
-                                self._auto_start(context, self, window)
-                        # Timer
-                        for window in wm.windows:
-                            addr = window.as_pointer()
-                            if addr not in self._render_timers:
-                                timer = wm.event_timer_add(
-                                    self.RENDER_TIMER_STEP, window)
-                                self._render_timers[addr] = timer
-                                logger.debug('Add timer')
-
-                return r
-            else:
-                return {'CANCELLED', 'PASS_THROUGH'}
+                                self._auto_start_do(context, window)
+                    # Timer
+                    if self.restart or self.all_windows:
+                        self._render_timer_add()
+            return r
 
         return _modal
 
@@ -1189,27 +1245,34 @@ class ModalHandlerManager:
 
             self._cleanup(context)
 
-            if addr not in self.switchers:
-                switcher = Switcher(addr)
-                self.switchers[addr] = switcher
-
-            if (self.is_running() and
-                    self.status in (self.RESTART, self.AUTO_RUN)):
+            manage = True
+            if (self.is_running(context) and
+                    self.status in (self.RESTART, self.AUTO_START)):
                 context.window_manager.modal_handler_add(self_)
+                if self.callback:
+                    if self.status == self.RESTART:
+                        op = self.operators[addr]
+                        self.callback(context, self_, op)
+                    elif self.status == self.AUTO_START:
+                        self.callback(context, self_, None)
                 r = {'RUNNING_MODAL', 'PASS_THROUGH'}
             else:
                 # Operator.invoke()
                 r = func(self_, context, event)
+                # 何も処理させたくない場合は return ({'CANCELLED'}, False)
+                # のように二つ目にFalseを渡す
+                if len(r) == 2 and isinstance(r[0], set):
+                    r, manage = r
 
-            if r & {'FINISHED', 'CANCELLED'}:
-                self._exit(context)
+            if not manage:
+                return r
+            elif r & {'FINISHED', 'CANCELLED'}:
+                win = None if self.all_windows else context.window
+                self._exit(context, win)
                 return r
             else:
-                switcher = self.switchers[addr]
-                switcher.start(self_)
+                self.operators[addr] = self_
                 self._add_handlers()
-                if self not in self.managers:
-                    self.managers.append(self)
                 return r
 
         return _invoke
@@ -1237,11 +1300,22 @@ class ScreencastKeysStatus(bpy.types.Operator):
     TIMER_STEP = 0.075
     prev_time = 0.0
 
+    # 描画対象
+    window = None
+    space = None  # AreaはCtrl+UP_ARROWで切り替えた際に一致しないのでSpaceを使う
+
+    @classmethod
+    def timer_add(cls, context, window):
+        wm = context.window_manager
+        if cls._timer:
+            wm.event_timer_remove(cls._timer)
+        cls._timer = wm.event_timer_add(cls.TIMER_STEP, window)
+
     @staticmethod
     def handle_add(self, context):
         cls = ScreencastKeysStatus
         cls._handle = bpy.types.SpaceView3D.draw_handler_add(draw_callback_px, (cls, context), 'WINDOW', 'POST_PIXEL')
-        cls._timer = context.window_manager.event_timer_add(self.TIMER_STEP, context.window)
+        cls.timer_add(context, context.window)
 
     @staticmethod
     def handle_remove(context):
@@ -1253,22 +1327,64 @@ class ScreencastKeysStatus(bpy.types.Operator):
             context.window_manager.event_timer_remove(cls._timer)
             cls._timer = None
 
+    @classmethod
+    def test_window_space(cls, context):
+        # 描画対象のspaceが無くてもまだ生きているwindowからの切り替えは行わない
+        wm = context.window_manager
+        windows = list(wm.windows)
+        if cls.window:
+            for win in windows:
+                if win == cls.window:
+                    break
+            else:
+                cls.window = None
+        if cls.window:
+            if cls.space:
+                for area in cls.window.screen.areas:
+                    if area.type == 'VIEW_3D':
+                        if area.spaces.active == cls.space:
+                            break
+                else:
+                    cls.space = None
+            if not cls.space:
+                for area in cls.window.screen.areas:
+                    if area.type == 'VIEW_3D':
+                        cls.space = area.spaces.active
+                        return
+        else:
+            cls.space = None
+            for win in windows:
+                for area in win.screen.areas:
+                    if area.type == 'VIEW_3D':
+                        cls.window = win
+                        cls.space = area.spaces.active
+                        cls.timer_add(context, cls.window)
+                        return
+
     @mm.modal
     def modal(self, context, event):
         pref = get_pref(context)
 
+        ignore_event = False
         if event.type in ('MOUSEMOVE', 'INBETWEEN_MOUSEMOVE'):
             if (event.mouse_x == event.mouse_prev_x and
                     event.mouse_y == event.mouse_prev_y):
-                return {'PASS_THROUGH'}
+                ignore_event = True
+        elif event.type == 'WINDOW_DEACTIVATE':
+            ignore_event = True
+
+        # if not ignore_event:
+        self.test_window_space(context)
 
         if event.type != 'TIMER' or time.time() - self.prev_time > self.TIMER_STEP:
-            for area in context.screen.areas:
-                if area.type == 'VIEW_3D':
-                    area.tag_redraw()
-            self.prev_time = time.time()
+            if self.window and self.space:
+                for area in self.window.screen.areas:
+                    if area.spaces.active == self.space:
+                        area.tag_redraw()
+                        self.prev_time = time.time()
+                        break
 
-        if event.type.startswith('TIMER') or event.type == 'WINDOW_DEACTIVATE':
+        if event.type.startswith('TIMER') or ignore_event:
             # no input, so no need to change the display
             return {'PASS_THROUGH'}
 
@@ -1341,11 +1457,40 @@ class ScreencastKeysStatus(bpy.types.Operator):
         cls.overall_time.clear()
         cls.prev_time = time.time()
 
+    def redraw_all_ui_panels(self, context):
+        wm = context.window_manager
+        for win in wm.windows:
+            for area in win.screen.areas:
+                if area.type == 'VIEW_3D':
+                    for region in area.regions:
+                        if region.type == 'UI':
+                            region.tag_redraw()
     @mm.invoke
     def invoke(self, context, event):
         # if context.area.type == 'VIEW_3D':
-        if mm.is_running():
-            ScreencastKeysStatus.handle_remove(context)
+        if mm.is_running(context):
+            cls = self.__class__
+            if cls.window != context.window or cls.space != context.space_data:
+                # 描画対象のwindow,spaceの切り替え
+                if cls.window and cls.space:
+                    for area in cls.window.screen.areas:
+                        if area.spaces.active == cls.space:
+                            area.tag_redraw()
+                cls.window = context.window
+                if context.area.type == 'VIEW_3D':
+                    cls.space = context.space_data
+                else:
+                    cls.space = None
+                self.test_window_space(context)
+                return {'CANCELLED', 'PASS_THROUGH'}, False
+            else:
+                # 同window,同spaceで呼び出された場合は終了
+                ScreencastKeysStatus.handle_remove(context)
+                if cls.window and cls.space:
+                    for area in cls.window.screen.areas:
+                        if area.spaces.active == cls.space:
+                            area.tag_redraw()
+                self.redraw_all_ui_panels(context)
             return {'CANCELLED'}
         else:
             # operator is called for the first time, start everything
@@ -1353,6 +1498,7 @@ class ScreencastKeysStatus(bpy.types.Operator):
             ScreencastKeysStatus.handle_add(self, context)
             ScreencastKeysStatus.overall_time.insert(0, time.time())
             context.window_manager.modal_handler_add(self)
+            self.redraw_all_ui_panels(context)
             return {'RUNNING_MODAL'}
         # else:
         #     self.report({'WARNING'}, "3D View not found, can't run Screencast Keys")
@@ -1551,12 +1697,18 @@ class OBJECT_PT_keys_status(bpy.types.Panel):
         pref = get_pref(context)
         layout = self.layout
 
-        if not mm.is_running():
+        if not mm.is_running(context):
             layout.operator("view3d.screencast_keys", text="Start Display",
-                icon = "PLAY")
+                            icon="PLAY")
         else:
-            layout.operator("view3d.screencast_keys", text="Stop Display",
-                icon = "PAUSE")
+            cls = ScreencastKeysStatus
+            if cls.window != context.window or cls.space != context.space_data:
+                text = "Switch Display"
+                icon = "PLAY"
+            else:
+                text = "Stop Display"
+                icon = "PAUSE"
+            layout.operator("view3d.screencast_keys", text=text, icon=icon)
 
             split = layout.split()
 
