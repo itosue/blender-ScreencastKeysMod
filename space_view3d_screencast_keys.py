@@ -32,7 +32,8 @@ bl_info = {
                 "Py/Scripts/3D_interaction/Screencast_Key_Status_Tool",
     "tracker_url": "http://projects.blender.org/tracker/index.php?"
                    "func=detail&aid=21612",
-    "category": "3D View"}
+    "category": "3D View"
+}
 
 import bgl
 import blf
@@ -40,14 +41,12 @@ import bpy
 import time
 import datetime
 
-
-MOUSE_RATIO = 0.535
-
-
 import functools
 from ctypes import *
 import logging
 
+
+MOUSE_RATIO = 0.535
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.WARNING)
@@ -800,7 +799,7 @@ class ModalHandlerManager:
         return _invoke
 
 
-def getDisplayLocation(context):
+def get_display_location(context):
     pref = get_pref(context)
     mouse_size = pref.mouse_size
 
@@ -809,9 +808,9 @@ def getDisplayLocation(context):
     if i >= 2:  # 右下、右上
         return -1, -1
 
-    pos_x = int( (context.region.width - mouse_size * MOUSE_RATIO) *
+    pos_x = int((context.region.width - mouse_size * MOUSE_RATIO) *
                 pref.pos_x / 100)
-    pos_y = int( (context.region.height - mouse_size) *
+    pos_y = int((context.region.height - mouse_size) *
                 pref.pos_y / 100)
 
     if i == 1:
@@ -820,13 +819,13 @@ def getDisplayLocation(context):
     return pos_x, pos_y
 
 
-def getBoundingBox(current_width, current_height, new_text):
-    w,h = blf.dimensions(0,new_text)
+def get_bounding_box(current_width, current_height, new_text):
+    w, h = blf.dimensions(0, new_text)
     if w > current_width:
         current_width = w
     current_height += h
 
-    return(current_width, current_height)
+    return current_width, current_height
 
 
 def key_to_text(key):
@@ -842,10 +841,9 @@ def draw_callback_px_text(cls, context):
     if not mm.is_running(context):
         return
 
-    font_size  = pref.font_size
+    font_size = pref.font_size
     mouse_size = pref.mouse_size
-    box_draw   = pref.box_draw
-    pos_x, pos_y = getDisplayLocation(context)
+    pos_x, pos_y = get_display_location(context)
     if pos_x == pos_y == -1:
         return
     label_time_max = pref.fade_time
@@ -856,7 +854,8 @@ def draw_callback_px_text(cls, context):
     blf.shadow_offset(0, 1, -1)
     blf.shadow(0, 5, 0.0, 0.0, 0.0, 0.8)
 
-    font_color_r, font_color_g, font_color_b, font_color_alpha = pref.text_color
+    font_color_r, font_color_g, font_color_b, font_color_alpha = \
+        pref.text_color
     final = 0
     row_count = len(cls.key)
 
@@ -871,31 +870,34 @@ def draw_callback_px_text(cls, context):
 
     shift = 0
 
-    # we want to make sure we can shift vertically the text if the mouse is big,
-    # but don't care if aligned to right 
-    if mouse_size > font_size*row_count and not pref.mouse_position == 'right':
-        shift = (mouse_size - font_size*row_count) / 2
+    # we want to make sure we can shift vertically the text if the mouse is
+    # big, but don't care if aligned to right
+    if mouse_size > font_size * row_count and \
+            not pref.mouse_position == 'right':
+        shift = (mouse_size - font_size * row_count) / 2
 
-    text_width, text_height = 0,0
+    text_width, text_height = 0, 0
     row_count = 0
-    alpha = 1.0
 
     for i in range(len(cls.key)):
         label_time = time.time() - cls.time[i]
-        if label_time < label_time_max: # only display key-presses of last 2 seconds
+        if label_time < label_time_max:
+            # only display key-presses of last 2 seconds
             if label_time > (label_time_max / 1.2):
                 blf.blur(0, 1)
             if label_time > (label_time_max / 1.1):
                 blf.blur(0, 3)
-            keypos_y = pos_y + shift + font_size*(i+0.1)
+            keypos_y = pos_y + shift + font_size * (i + 0.1)
 
-            blf.position(0, keypos_x, keypos_y , 0)
-            alpha = min(1.0, max(0.0, label_time_max * (label_time_max - label_time)))
-            bgl.glColor4f(font_color_r, font_color_g, font_color_b, font_color_alpha * alpha)
+            blf.position(0, keypos_x, keypos_y, 0)
+            alpha = min(1.0, max(0.0, label_time_max * (label_time_max -
+                                                        label_time)))
+            bgl.glColor4f(font_color_r, font_color_g, font_color_b,
+                          font_color_alpha * alpha)
             text = key_to_text(cls.key[i])
             blf.draw(0, text)
-            text_width, text_height = getBoundingBox(text_width, text_height,
-                                                     text)
+            text_width, text_height = get_bounding_box(text_width, text_height,
+                                                       text)
             row_count += 1
             final = i + 1
         else:
@@ -904,7 +906,7 @@ def draw_callback_px_text(cls, context):
     # remove blurriness 
 
     # disable shadows so they don't appear all over blender
-    blf.blur(0,0)
+    blf.blur(0, 0)
     blf.disable(0, blf.SHADOW)
 
     # get rid of status texts that aren't displayed anymore
@@ -932,26 +934,27 @@ def draw_callback_px_text(cls, context):
     cls.mouse = cls.mouse[:final]
     cls.mouse_time = cls.mouse_time[:final]
 
+
 def draw_callback_px_box(cls, context):
     pref = get_pref(context)
 
     if not mm.is_running(context):
         return
 
-    font_size  = pref.font_size
+    font_size = pref.font_size
     mouse_size = pref.mouse_size
 
     if pref.mouse_position == 'right':
         mouse_size = 25
 
-    box_draw   = pref.box_draw
-    pos_x, pos_y = getDisplayLocation(context)
+    box_draw = pref.box_draw
+    pos_x, pos_y = get_display_location(context)
     if pos_x == pos_y == -1:
         return
 
     # get text-width/height to resize the box
     blf.size(0, pref.font_size, 72)
-    box_width, box_height = pref.box_width,0
+    box_width, box_height = pref.box_width, 0
     final = 0
     row_count = 0
     box_hide = pref.box_hide
@@ -960,9 +963,11 @@ def draw_callback_px_box(cls, context):
     for i in range(len(cls.key)):
         label_time = time.time() - cls.time[i]
 
-        if label_time < label_time_max: # only display key-presses of last 4 seconds
+        if label_time < label_time_max:
+            # only display key-presses of last 4 seconds
             text = key_to_text(cls.key[i])
-            box_width, box_height = getBoundingBox(box_width, box_height, text)
+            box_width, box_height = get_bounding_box(box_width, box_height,
+                                                     text)
             row_count += 1
             final = i + 1
             box_hide = False
@@ -980,12 +985,14 @@ def draw_callback_px_box(cls, context):
         x1 = pos_x + box_width + mouse_size * MOUSE_RATIO * 1.3 + padding_x
         y1 = pos_y + max(mouse_size, font_size * row_count) + padding_y
         positions = [[x0, y0], [x0, y1], [x1, y1], [x1, y0]]
-        settings = [[bgl.GL_QUADS, min(0.0, box_color_alpha)], [bgl.GL_LINE_LOOP, min(0.0, box_color_alpha)]]
+        settings = [[bgl.GL_QUADS, min(0.0, box_color_alpha)],
+                    [bgl.GL_LINE_LOOP, min(0.0, box_color_alpha)]]
 
         for mode, box_alpha in settings:
             bgl.glEnable(bgl.GL_BLEND)
             bgl.glBegin(mode)
-            bgl.glColor4f(box_color_r, box_color_g, box_color_b, box_color_alpha)
+            bgl.glColor4f(box_color_r, box_color_g, box_color_b,
+                          box_color_alpha)
             for v1, v2 in positions:
                 bgl.glVertex2f(v1, v2)
             bgl.glEnd()
@@ -1066,36 +1073,39 @@ def draw_last_operator(context, pos_x, pos_y):
         _, th = blf.dimensions(0, text)
         pos_y -= th + 5
         blf.position(0, pos_x - 14, pos_y, 0)
-        bgl.glColor4f(font_color_r, font_color_g, font_color_b, font_color_alpha * 0.8)
+        bgl.glColor4f(font_color_r, font_color_g, font_color_b,
+                      font_color_alpha * 0.8)
         blf.draw(0, text)
         blf.disable(0, blf.SHADOW)
     return pos_y
 
 
 def draw_timer(context, pos_x, pos_y):
-
     pref = get_pref(context)
     #calculate overall time
-    overall_time = datetime.timedelta(seconds=int(time.time() - ScreencastKeysStatus.overall_time[0]))
+    overall_time = datetime.timedelta(
+        seconds=int(time.time() - ScreencastKeysStatus.overall_time[0]))
 
-    timer_color_r, timer_color_g, timer_color_b, timer_color_alpha = pref.timer_color
+    timer_color_r, timer_color_g, timer_color_b, timer_color_alpha = \
+        pref.timer_color
     pos_x = context.region.width - (pref.timer_size * 12) + 12
     pos_y = 10
 
     #draw time
     blf.size(0, pref.timer_size, 72)
     blf.position(0, pos_x, pos_y, 0)
-    bgl.glColor4f(timer_color_r, timer_color_g, timer_color_b, timer_color_alpha)
-    blf.draw(0, "Elapsed Time: %s" % (overall_time))
+    bgl.glColor4f(timer_color_r, timer_color_g, timer_color_b,
+                  timer_color_alpha)
+    blf.draw(0, "Elapsed Time: %s" % overall_time)
+
 
 def draw_mouse(context, shape, style, alpha):
     # shape and position
     pref = get_pref(context)
     mouse_size = pref.mouse_size
-    font_size  = pref.font_size
-    box_draw = pref.box_draw
+    font_size = pref.font_size
 
-    pos_x, pos_y = getDisplayLocation(context)
+    pos_x, pos_y = get_display_location(context)
 
     if pref.mouse_position == 'left':
         offset_x = pos_x
@@ -1138,7 +1148,7 @@ def draw_mouse(context, shape, style, alpha):
 
         if style == "outline":
             bgl.glBegin(bgl.GL_LINE_STRIP)
-        else: # style == "filled"
+        else:  # style == "filled"
             bgl.glBegin(bgl.GL_TRIANGLE_FAN)
         for j in range(10):
             bgl.glEvalCoord1f(j / 10.0)
@@ -1160,157 +1170,158 @@ def draw_mouse(context, shape, style, alpha):
 
     bgl.glTranslatef(-offset_x, -offset_y, 0)
 
+
 # hardcoded data to draw the graphical represenation of the mouse
 def get_shape_data(shape):
     data = []
     if shape == "mouse":
         data = [[[0.404, 0.032, 0.0],
-            [0.096, 0.002, 0.0],
-            [0.059, 0.126, 0.0],
-            [0.04, 0.213, 0.0]],
-            [[0.04, 0.213, 0.0],
-            [-0.015, 0.465, 0.0],
-            [-0.005, 0.564, 0.0],
-            [0.032, 0.87, 0.0]],
-            [[0.032, 0.87, 0.0],
-            [0.05, 0.973, 0.0],
-            [0.16, 1.002, 0.0],
-            [0.264, 1.002, 0.0]],
-            [[0.264, 1.002, 0.0],
-            [0.369, 1.002, 0.0],
-            [0.478, 0.973, 0.0],
-            [0.497, 0.87, 0.0]],
-            [[0.497, 0.87, 0.0],
-            [0.533, 0.564, 0.0],
-            [0.554, 0.465, 0.0],
-            [0.499, 0.213, 0.0]],
-            [[0.499, 0.213, 0.0],
-            [0.490, 0.126, 0.0],
-            [0.432, 0.002, 0.0],
-            [0.404, 0.032, 0.0]]]
+                 [0.096, 0.002, 0.0],
+                 [0.059, 0.126, 0.0],
+                 [0.04, 0.213, 0.0]],
+                [[0.04, 0.213, 0.0],
+                 [-0.015, 0.465, 0.0],
+                 [-0.005, 0.564, 0.0],
+                 [0.032, 0.87, 0.0]],
+                [[0.032, 0.87, 0.0],
+                 [0.05, 0.973, 0.0],
+                 [0.16, 1.002, 0.0],
+                 [0.264, 1.002, 0.0]],
+                [[0.264, 1.002, 0.0],
+                 [0.369, 1.002, 0.0],
+                 [0.478, 0.973, 0.0],
+                 [0.497, 0.87, 0.0]],
+                [[0.497, 0.87, 0.0],
+                 [0.533, 0.564, 0.0],
+                 [0.554, 0.465, 0.0],
+                 [0.499, 0.213, 0.0]],
+                [[0.499, 0.213, 0.0],
+                 [0.490, 0.126, 0.0],
+                 [0.432, 0.002, 0.0],
+                 [0.404, 0.032, 0.0]]]
     elif shape == "left_button":
         data = [[[0.154, 0.763, 0.0],
-            [0.126, 0.755, 0.0],
-            [0.12, 0.754, 0.0],
-            [0.066, 0.751, 0.0]],
-            [[0.066, 0.751, 0.0],
-            [0.043, 0.75, 0.0],
-            [0.039, 0.757, 0.0],
-            [0.039, 0.767, 0.0]],
-            [[0.039, 0.767, 0.0],
-            [0.047, 0.908, 0.0],
-            [0.078, 0.943, 0.0],
-            [0.155, 0.97, 0.0]],
-            [[0.155, 0.97, 0.0],
-            [0.174, 0.977, 0.0],
-            [0.187, 0.975, 0.0],
-            [0.191, 0.972, 0.0]],
-            [[0.191, 0.972, 0.0],
-            [0.203, 0.958, 0.0],
-            [0.205, 0.949, 0.0],
-            [0.199, 0.852, 0.0]],
-            [[0.199, 0.852, 0.0],
-            [0.195, 0.77, 0.0],
-            [0.18, 0.771, 0.0],
-            [0.154, 0.763, 0.0]]]
+                 [0.126, 0.755, 0.0],
+                 [0.12, 0.754, 0.0],
+                 [0.066, 0.751, 0.0]],
+                [[0.066, 0.751, 0.0],
+                 [0.043, 0.75, 0.0],
+                 [0.039, 0.757, 0.0],
+                 [0.039, 0.767, 0.0]],
+                [[0.039, 0.767, 0.0],
+                 [0.047, 0.908, 0.0],
+                 [0.078, 0.943, 0.0],
+                 [0.155, 0.97, 0.0]],
+                [[0.155, 0.97, 0.0],
+                 [0.174, 0.977, 0.0],
+                 [0.187, 0.975, 0.0],
+                 [0.191, 0.972, 0.0]],
+                [[0.191, 0.972, 0.0],
+                 [0.203, 0.958, 0.0],
+                 [0.205, 0.949, 0.0],
+                 [0.199, 0.852, 0.0]],
+                [[0.199, 0.852, 0.0],
+                 [0.195, 0.77, 0.0],
+                 [0.18, 0.771, 0.0],
+                 [0.154, 0.763, 0.0]]]
     elif shape == "middle_button":
         data = [[[0.301, 0.8, 0.0],
-            [0.298, 0.768, 0.0],
-            [0.231, 0.768, 0.0],
-            [0.228, 0.8, 0.0]],
-            [[0.228, 0.8, 0.0],
-            [0.226, 0.817, 0.0],
-            [0.225, 0.833, 0.0],
-            [0.224, 0.85, 0.0]],
-            [[0.224, 0.85, 0.0],
-            [0.222, 0.873, 0.0],
-            [0.222, 0.877, 0.0],
-            [0.224, 0.9, 0.0]],
-            [[0.224, 0.9, 0.0],
-            [0.225, 0.917, 0.0],
-            [0.226, 0.933, 0.0],
-            [0.228, 0.95, 0.0]],
-            [[0.228, 0.95, 0.0],
-            [0.231, 0.982, 0.0],
-            [0.298, 0.982, 0.0],
-            [0.301, 0.95, 0.0]],
-            [[0.301, 0.95, 0.0],
-            [0.302, 0.933, 0.0],
-            [0.303, 0.917, 0.0],
-            [0.305, 0.9, 0.0]],
-            [[0.305, 0.9, 0.0],
-            [0.307, 0.877, 0.0],
-            [0.307, 0.873, 0.0],
-            [0.305, 0.85, 0.0]],
-            [[0.305, 0.85, 0.0],
-            [0.303, 0.833, 0.0],
-            [0.302, 0.817, 0.0],
-            [0.301, 0.8, 0.0]]]
+                 [0.298, 0.768, 0.0],
+                 [0.231, 0.768, 0.0],
+                 [0.228, 0.8, 0.0]],
+                [[0.228, 0.8, 0.0],
+                 [0.226, 0.817, 0.0],
+                 [0.225, 0.833, 0.0],
+                 [0.224, 0.85, 0.0]],
+                [[0.224, 0.85, 0.0],
+                 [0.222, 0.873, 0.0],
+                 [0.222, 0.877, 0.0],
+                 [0.224, 0.9, 0.0]],
+                [[0.224, 0.9, 0.0],
+                 [0.225, 0.917, 0.0],
+                 [0.226, 0.933, 0.0],
+                 [0.228, 0.95, 0.0]],
+                [[0.228, 0.95, 0.0],
+                 [0.231, 0.982, 0.0],
+                 [0.298, 0.982, 0.0],
+                 [0.301, 0.95, 0.0]],
+                [[0.301, 0.95, 0.0],
+                 [0.302, 0.933, 0.0],
+                 [0.303, 0.917, 0.0],
+                 [0.305, 0.9, 0.0]],
+                [[0.305, 0.9, 0.0],
+                 [0.307, 0.877, 0.0],
+                 [0.307, 0.873, 0.0],
+                 [0.305, 0.85, 0.0]],
+                [[0.305, 0.85, 0.0],
+                 [0.303, 0.833, 0.0],
+                 [0.302, 0.817, 0.0],
+                 [0.301, 0.8, 0.0]]]
     elif shape == "middle_down_button":
         data = [[[0.301, 0.8, 0.0],
-            [0.298, 0.768, 0.0],
-            [0.231, 0.768, 0.0],
-            [0.228, 0.8, 0.0]],
-            [[0.228, 0.8, 0.0],
-            [0.226, 0.817, 0.0],
-            [0.225, 0.833, 0.0],
-            [0.224, 0.85, 0.0]],
-            [[0.224, 0.85, 0.0],
-            [0.264, 0.873, 0.0],
-            [0.284, 0.873, 0.0],
-            [0.305, 0.85, 0.0]],
-            [[0.305, 0.85, 0.0],
-            [0.303, 0.833, 0.0],
-            [0.302, 0.817, 0.0],
-            [0.301, 0.8, 0.0]]]
+                 [0.298, 0.768, 0.0],
+                 [0.231, 0.768, 0.0],
+                 [0.228, 0.8, 0.0]],
+                [[0.228, 0.8, 0.0],
+                 [0.226, 0.817, 0.0],
+                 [0.225, 0.833, 0.0],
+                 [0.224, 0.85, 0.0]],
+                [[0.224, 0.85, 0.0],
+                 [0.264, 0.873, 0.0],
+                 [0.284, 0.873, 0.0],
+                 [0.305, 0.85, 0.0]],
+                [[0.305, 0.85, 0.0],
+                 [0.303, 0.833, 0.0],
+                 [0.302, 0.817, 0.0],
+                 [0.301, 0.8, 0.0]]]
     elif shape == "middle_up_button":
         data = [[[0.270, 0.873, 0.0],
-            [0.264, 0.873, 0.0],
-            [0.222, 0.877, 0.0],
-            [0.224, 0.9, 0.0]],
-            [[0.224, 0.9, 0.0],
-            [0.225, 0.917, 0.0],
-            [0.226, 0.933, 0.0],
-            [0.228, 0.95, 0.0]],
-            [[0.228, 0.95, 0.0],
-            [0.231, 0.982, 0.0],
-            [0.298, 0.982, 0.0],
-            [0.301, 0.95, 0.0]],
-            [[0.301, 0.95, 0.0],
-            [0.302, 0.933, 0.0],
-            [0.303, 0.917, 0.0],
-            [0.305, 0.9, 0.0]],
-            [[0.305, 0.9, 0.0],
-            [0.307, 0.877, 0.0],
-            [0.284, 0.873, 0.0],
-            [0.270, 0.873, 0.0]]]
+                 [0.264, 0.873, 0.0],
+                 [0.222, 0.877, 0.0],
+                 [0.224, 0.9, 0.0]],
+                [[0.224, 0.9, 0.0],
+                 [0.225, 0.917, 0.0],
+                 [0.226, 0.933, 0.0],
+                 [0.228, 0.95, 0.0]],
+                [[0.228, 0.95, 0.0],
+                 [0.231, 0.982, 0.0],
+                 [0.298, 0.982, 0.0],
+                 [0.301, 0.95, 0.0]],
+                [[0.301, 0.95, 0.0],
+                 [0.302, 0.933, 0.0],
+                 [0.303, 0.917, 0.0],
+                 [0.305, 0.9, 0.0]],
+                [[0.305, 0.9, 0.0],
+                 [0.307, 0.877, 0.0],
+                 [0.284, 0.873, 0.0],
+                 [0.270, 0.873, 0.0]]]
     elif shape == "right_button":
         data = [[[0.375, 0.763, 0.0],
-            [0.402, 0.755, 0.0],
-            [0.408, 0.754, 0.0],
-            [0.462, 0.751, 0.0]],
-            [[0.462, 0.751, 0.0],
-            [0.486, 0.75, 0.0],
-            [0.49, 0.757, 0.0],
-            [0.489, 0.767, 0.0]],
-            [[0.489, 0.767, 0.0],
-            [0.481, 0.908, 0.0],
-            [0.451, 0.943, 0.0],
-            [0.374, 0.97, 0.0]],
-            [[0.374, 0.97, 0.0],
-            [0.354, 0.977, 0.0],
-            [0.341, 0.975, 0.0],
-            [0.338, 0.972, 0.0]],
-            [[0.338, 0.972, 0.0],
-            [0.325, 0.958, 0.0],
-            [0.324, 0.949, 0.0],
-            [0.329, 0.852, 0.0]],
-            [[0.329, 0.852, 0.0],
-            [0.334, 0.77, 0.0],
-            [0.348, 0.771, 0.0],
-            [0.375, 0.763, 0.0]]]
+                 [0.402, 0.755, 0.0],
+                 [0.408, 0.754, 0.0],
+                 [0.462, 0.751, 0.0]],
+                [[0.462, 0.751, 0.0],
+                 [0.486, 0.75, 0.0],
+                 [0.49, 0.757, 0.0],
+                 [0.489, 0.767, 0.0]],
+                [[0.489, 0.767, 0.0],
+                 [0.481, 0.908, 0.0],
+                 [0.451, 0.943, 0.0],
+                 [0.374, 0.97, 0.0]],
+                [[0.374, 0.97, 0.0],
+                 [0.354, 0.977, 0.0],
+                 [0.341, 0.975, 0.0],
+                 [0.338, 0.972, 0.0]],
+                [[0.338, 0.972, 0.0],
+                 [0.325, 0.958, 0.0],
+                 [0.324, 0.949, 0.0],
+                 [0.329, 0.852, 0.0]],
+                [[0.329, 0.852, 0.0],
+                 [0.334, 0.77, 0.0],
+                 [0.348, 0.771, 0.0],
+                 [0.375, 0.763, 0.0]]]
 
-    return(data)
+    return data
 
 
 # return the shape that belongs to the given event
@@ -1328,7 +1339,7 @@ def map_mouse_event(event):
     elif event == 'WHEELUPMOUSE':
         shape = "middle_up_button"
 
-    return(shape)
+    return shape
 
 
 def invoke_callback(context, event, dst, src):
@@ -1374,7 +1385,8 @@ class ScreencastKeysStatus(bpy.types.Operator):
     @staticmethod
     def handle_add(self, context):
         cls = ScreencastKeysStatus
-        cls._handle = bpy.types.SpaceView3D.draw_handler_add(draw_callback_px, (cls, context), 'WINDOW', 'POST_PIXEL')
+        cls._handle = bpy.types.SpaceView3D.draw_handler_add(
+            draw_callback_px, (cls, context), 'WINDOW', 'POST_PIXEL')
         cls.timer_add(context, context.window)
 
     @staticmethod
@@ -1428,7 +1440,7 @@ class ScreencastKeysStatus(bpy.types.Operator):
         ignore_event = False
         if event.type in ('MOUSEMOVE', 'INBETWEEN_MOUSEMOVE'):
             if (event.mouse_x == event.mouse_prev_x and
-                    event.mouse_y == event.mouse_prev_y):
+                        event.mouse_y == event.mouse_prev_y):
                 ignore_event = True
         elif event.type == 'WINDOW_DEACTIVATE':
             ignore_event = True
@@ -1449,11 +1461,12 @@ class ScreencastKeysStatus(bpy.types.Operator):
             return {'PASS_THROUGH'}
 
         # keys that shouldn't show up in the 3D View
-        mouse_keys = ['MIDDLEMOUSE','LEFTMOUSE',
-         'RIGHTMOUSE', 'WHEELDOWNMOUSE','WHEELUPMOUSE']
+        mouse_keys = ['MIDDLEMOUSE', 'LEFTMOUSE',
+                      'RIGHTMOUSE', 'WHEELDOWNMOUSE', 'WHEELUPMOUSE']
         ignore_keys = ['LEFT_SHIFT', 'RIGHT_SHIFT', 'LEFT_ALT',
-         'RIGHT_ALT', 'LEFT_CTRL', 'RIGHT_CTRL', 'OSKEY', 'TIMER',
-         'MOUSEMOVE', 'INBETWEEN_MOUSEMOVE']
+                       'RIGHT_ALT', 'LEFT_CTRL', 'RIGHT_CTRL', 'OSKEY',
+                       'TIMER',
+                       'MOUSEMOVE', 'INBETWEEN_MOUSEMOVE']
         if pref.mouse != 'text':
             ignore_keys.extend(mouse_keys)
 
@@ -1477,7 +1490,7 @@ class ScreencastKeysStatus(bpy.types.Operator):
                 event_type = event.type
                 if event_type in numbers:
                     event_type = numbers[event_type]
-                #print("Recorded as key")
+                # print("Recorded as key")
                 if (self.key and self.key[0][0] == event_type and
                         self.key[0][1] == mods):
                     self.key[0][2] += 1
@@ -1486,9 +1499,8 @@ class ScreencastKeysStatus(bpy.types.Operator):
                     self.key.insert(0, [event_type, mods, 1])
                     self.time.insert(0, time.time())
 
-            elif event.type in mouse_keys and \
-            pref.mouse == 'icon':
-                #print("Recorded as mouse press")
+            elif event.type in mouse_keys and pref.mouse == 'icon':
+                # print("Recorded as mouse press")
                 self.mouse.insert(0, event.type)
                 self.mouse_time.insert(0, time.time())
 
@@ -1496,7 +1508,7 @@ class ScreencastKeysStatus(bpy.types.Operator):
                 self.last_activity = 'MOUSE'
             else:
                 self.last_activity = 'KEYBOARD'
-            #print("Last activity set to:", self.last_activity)
+            # print("Last activity set to:", self.last_activity)
 
         return {'PASS_THROUGH'}
 
@@ -1558,9 +1570,10 @@ class ScreencastKeysStatus(bpy.types.Operator):
             context.window_manager.modal_handler_add(self)
             self.redraw_all_ui_panels(context)
             return {'RUNNING_MODAL'}
-        # else:
-        #     self.report({'WARNING'}, "3D View not found, can't run Screencast Keys")
-        #     return {'CANCELLED'}
+            # else:
+            #     self.report({'WARNING'},
+            #                 "3D View not found, can't run Screencast Keys")
+            #     return {'CANCELLED'}
 
 
 class ScreencastKeysTimerReset(bpy.types.Operator):
@@ -1617,53 +1630,53 @@ class ScreenCastKeysPreferences(bpy.types.AddonPreferences):
     box_width = bpy.props.IntProperty(
         name="Box Width",
         description="Box default width (resizes with text if needed)",
-        default = 0,
-        min = 0,
-        max = 2048,
-        soft_max = 1024)
+        default=0,
+        min=0,
+        max=2048,
+        soft_max=1024)
     mouse = bpy.props.EnumProperty(
         items=(("none", "No Mouse", "Don't display mouse events"),
-              ("icon", "Icon", "Display graphical representation of "\
-               "the mouse"),
-              ("text", "Text", "Display mouse events as text lines")),
+               ("icon", "Icon", "Display graphical representation of "
+                                "the mouse"),
+               ("text", "Text", "Display mouse events as text lines")),
         name="Mouse Display",
         description="Display mouse events",
         default='icon')
     mouse_position = bpy.props.EnumProperty(
         items=(("left", "Left", "Align to the left"),
-              ("right", "Right", "Align to the right")),
+               ("right", "Right", "Align to the right")),
         name="Icon Position",
         description="Align the mouse icon on the 3D View",
         default='left')
     box_draw = bpy.props.BoolProperty(
         name="Display Box",
-        description = "Display a bounding box behind the text",
-        default = True)
+        description="Display a bounding box behind the text",
+        default=True)
     box_hide = bpy.props.BoolProperty(
         name="Hide Box",
-        description = "Hide the box when no key is pressed",
-        default = False)
+        description="Hide the box when no key is pressed",
+        default=False)
     fade_time = bpy.props.FloatProperty(
         name="Fade Out Time",
-        description = "Time in seconds for keys to last on screen",
-        default = 3.5,
-        min = 0.5,
-        max = 10.0,
-        soft_max = 5.0,
-        step = 10,
-        subtype = 'TIME')
+        description="Time in seconds for keys to last on screen",
+        default=3.5,
+        min=0.5,
+        max=10.0,
+        soft_max=5.0,
+        step=10,
+        subtype='TIME')
     show_modifiers = bpy.props.BoolProperty(
         name="Display Modifier Keys",
-        description = "Display holding modifier keys",
+        description="Display holding modifier keys",
         default=True)
     show_operator = bpy.props.BoolProperty(
         name="Display Last Operator",
-        description = "Display the last operator used",
-        default = True)
+        description="Display the last operator used",
+        default=True)
     timer_show = bpy.props.BoolProperty(
         name="Display Timer",
-        description = "Counter of the elapsed time in H:MM:SS since the script started",
-        default = False)
+        description="Counter of the elapsed time in H:MM:SS since the script started",
+        default=False)
     timer_size = bpy.props.IntProperty(
         name="Time Size",
         description="Time size displayed on 3D View",
@@ -1833,6 +1846,7 @@ class OBJECT_PT_keys_status(bpy.types.Panel):
             row.enabled = pref.timer_show
             row.operator("view3d.screencast_keys_timer_reset", text="Reset")
 
+
 classes = (ScreencastKeysStatus,
            ScreencastKeysTimerReset,
            OBJECT_PT_keys_status,
@@ -1851,7 +1865,8 @@ def register():
     kc = wm.keyconfigs.addon
     if kc:
         km = kc.keymaps.new(name='3D View', space_type='VIEW_3D')
-        kmi = km.keymap_items.new('view3d.screencast_keys', 'C', 'PRESS', shift=True, alt=True)
+        kmi = km.keymap_items.new('view3d.screencast_keys', 'C', 'PRESS',
+                                  shift=True, alt=True)
         addon_keymaps.append((km, kmi))
 
 
