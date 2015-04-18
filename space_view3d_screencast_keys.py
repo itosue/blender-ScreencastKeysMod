@@ -171,7 +171,7 @@ class Structures:
         ('drawmethod', c_int),
         ('drawfail', c_int),
 
-        _drawdata,  # FIXME: 2.74: c_void_p, master: ListBase
+        _drawdata,  # 2.74: c_void_p, master: ListBase
 
         ('queue', ListBase),  # ListBase
         ('handlers', ListBase),  # ListBase
