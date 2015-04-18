@@ -22,8 +22,8 @@
 bl_info = {
     "name": "Screencast Keys Mod",
     "author": "Paulo Gomes, Bart Crouch, John E. Herrenyo, Gaia Clary, Pablo Vazquez, chromoly",
-    "version": (1, 7, 1),
-    "blender": (2, 74, 0),  # (2, 74, 0) or (2, 74, 4)<commit: 87b6d3c7960461249e80c4c8c304cfc968c6586c>
+    "version": (1, 7, 2),
+    "blender": (2, 74, 0),  # (2, 74, 0) or git master
     "location": "3D View > Properties Panel > Screencast Keys",
     "warning": "",
     "description": "Display keys pressed in the 3D View, "
@@ -829,6 +829,14 @@ def getBoundingBox(current_width, current_height, new_text):
     return(current_width, current_height)
 
 
+def key_to_text(key):
+    event_type, mods, count = key
+    text = ' + '.join(list(mods) + [event_type])
+    if count > 1:
+        text += ' x' + str(count)
+    return text
+
+
 def draw_callback_px_text(cls, context):
     pref = get_pref(context)
     if not mm.is_running(context):
@@ -884,9 +892,10 @@ def draw_callback_px_text(cls, context):
             blf.position(0, keypos_x, keypos_y , 0)
             alpha = min(1.0, max(0.0, label_time_max * (label_time_max - label_time)))
             bgl.glColor4f(font_color_r, font_color_g, font_color_b, font_color_alpha * alpha)
-            blf.draw(0, cls.key[i])
+            text = key_to_text(cls.key[i])
+            blf.draw(0, text)
             text_width, text_height = getBoundingBox(text_width, text_height,
-                cls.key[i])
+                                                     text)
             row_count += 1
             final = i + 1
         else:
@@ -952,7 +961,8 @@ def draw_callback_px_box(cls, context):
         label_time = time.time() - cls.time[i]
 
         if label_time < label_time_max: # only display key-presses of last 4 seconds
-            box_width, box_height = getBoundingBox(box_width, box_height, cls.key[i])
+            text = key_to_text(cls.key[i])
+            box_width, box_height = getBoundingBox(box_width, box_height, text)
             row_count += 1
             final = i + 1
             box_hide = False
@@ -1338,7 +1348,7 @@ class ScreencastKeysStatus(bpy.types.Operator):
     _handle = None
     _timer = None
 
-    key = []
+    key = []  # [[type, [mods], count], ...]
     time = []
     mouse = []
     mouse_time = []
@@ -1447,39 +1457,34 @@ class ScreencastKeysStatus(bpy.types.Operator):
         if pref.mouse != 'text':
             ignore_keys.extend(mouse_keys)
 
+        numbers = {'ZERO': '0', 'ONE': '1', 'TWO': '2', 'THREE': '3',
+                   'FOUR': '4', 'FIVE': '5', 'SIX': '6', 'SEVEN': '7',
+                   'EIGHT': '8', 'NINE': '9'}
         if event.value == 'PRESS' or (event.value == 'RELEASE' and \
-        self.last_activity == 'KEYBOARD' and event.type in mouse_keys):
+                self.last_activity == 'KEYBOARD' and event.type in mouse_keys):
             # add key-press to display-list
-            sc_keys = []
-
-            if event.ctrl:
-                sc_keys.append("Ctrl ")
-            if event.alt:
-                sc_keys.append("Alt ")
+            mods = []
             if event.shift:
-                sc_keys.append("Shift ")
-
-            sc_amount = ""
-
-            if self.key:
-                #print("Is a key")
-                if event.type not in ignore_keys and event.type in self.key[0]:
-                    mods = "+ ".join(sc_keys)
-                    old_mods = "+ ".join(self.key[0].split("+ ")[:-1])
-                    if mods == old_mods:
-                        amount = self.key[0].split(" x")
-                        if len(amount) >= 2:
-                            sc_amount = " x" + str(int(amount[-1]) + 1)
-                        else:
-                            sc_amount = " x2"
-                        del self.key[0]
-                        del self.time[0]
+                mods.append("Shift")
+            if event.ctrl:
+                mods.append("Ctrl")
+            if event.alt:
+                mods.append("Alt")
+            if event.oskey:
+                mods.append("Cmd")
 
             if event.type not in ignore_keys:
+                event_type = event.type
+                if event_type in numbers:
+                    event_type = numbers[event_type]
                 #print("Recorded as key")
-                sc_keys.append(event.type)
-                self.key.insert(0, "+ ".join(sc_keys) + sc_amount)
-                self.time.insert(0, time.time())
+                if (self.key and self.key[0][0] == event_type and
+                        self.key[0][1] == mods):
+                    self.key[0][2] += 1
+                    self.time[0] = time.time()
+                else:
+                    self.key.insert(0, [event_type, mods, 1])
+                    self.time.insert(0, time.time())
 
             elif event.type in mouse_keys and \
             pref.mouse == 'icon':
