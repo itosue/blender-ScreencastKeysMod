@@ -980,8 +980,12 @@ def draw_callback_px_box(cls, context):
                 bgl.glVertex2f(v1, v2)
             bgl.glEnd()
 
+    py = pos_y - 12
+    if pref.show_modifiers:
+        py = draw_modifiers(cls, context, pos_x, py)
+
     if pref.show_operator:
-        draw_last_operator(context, pos_x, pos_y)
+        draw_last_operator(context, pos_x, py)
 
     if pref.timer_show:
         draw_timer(context, pos_x, pos_y)
@@ -1000,24 +1004,63 @@ def draw_callback_px(cls, context):
     draw_callback_px_box(cls, context)
 
 
-def draw_last_operator(context, pos_x, pos_y):
+def draw_modifiers(cls, context, pos_x, pos_y):
+    pref = get_pref(context)
+    font_color_r, font_color_g, font_color_b, font_color_alpha = pref.text_color
 
+    keys = []
+    active_window = mm.active_window(context)
+    if active_window:
+        event = cls.events[active_window.as_pointer()]
+        if event.shift:
+            keys.append('Shift')
+        if event.ctrl:
+            keys.append('Ctrl')
+        if event.alt:
+            keys.append('Alt')
+        if event.oskey:
+            keys.append('Cmd')
+
+    blf.size(0, pref.font_size, 54)
+    text = ' + '.join(keys)
+    if text:
+        _, th = blf.dimensions(0, text)
+        pos_y -= th + 5
+    else:
+        _, th = blf.dimensions(0, 'Shift + Ctrl + Alt + Cmd')
+        pos_y -= th + 5
+    if text:
+        blf.enable(0, blf.SHADOW)
+        blf.shadow_offset(0, 1, -1)
+        blf.shadow(0, 5, 0.0, 0.0, 0.0, 0.8)
+        blf.position(0, pos_x - 14, pos_y, 0)
+        bgl.glColor4f(font_color_r, font_color_g, font_color_b,
+                      font_color_alpha * 0.8)
+        blf.draw(0, text)
+        blf.disable(0, blf.SHADOW)
+    return pos_y
+
+
+def draw_last_operator(context, pos_x, pos_y):
     wm = context.window_manager
     pref = get_pref(context)
     font_color_r, font_color_g, font_color_b, font_color_alpha = pref.text_color
-    pos_x, pos_y = getDisplayLocation(context)
 
     if wm.operators:
         last_operator = wm.operators[-1].bl_label
-
+        text = "Last: %s" % last_operator
         blf.enable(0, blf.SHADOW)
         blf.shadow_offset(0, 1, -1)
         blf.shadow(0, 5, 0.0, 0.0, 0.0, 0.8)
         blf.size(0, pref.font_size, 36)
-        blf.position(0, pos_x - 14, pos_y - 30, 0)
+        _, th = blf.dimensions(0, text)
+        pos_y -= th + 5
+        blf.position(0, pos_x - 14, pos_y, 0)
         bgl.glColor4f(font_color_r, font_color_g, font_color_b, font_color_alpha * 0.8)
-        blf.draw(0, "Last: %s" % (last_operator))
+        blf.draw(0, text)
         blf.disable(0, blf.SHADOW)
+    return pos_y
+
 
 def draw_timer(context, pos_x, pos_y):
 
@@ -1278,7 +1321,12 @@ def map_mouse_event(event):
     return(shape)
 
 
-mm = ModalHandlerManager('view3d.screencast_keys')
+def invoke_callback(context, event, dst, src):
+    window = context.window
+    dst.__class__.events[window.as_pointer()] = event
+
+
+mm = ModalHandlerManager('view3d.screencast_keys', callback=invoke_callback)
 
 
 class ScreencastKeysStatus(bpy.types.Operator):
@@ -1299,6 +1347,8 @@ class ScreencastKeysStatus(bpy.types.Operator):
 
     TIMER_STEP = 0.075
     prev_time = 0.0
+
+    events = {}
 
     # 描画対象
     window = None
@@ -1456,6 +1506,7 @@ class ScreencastKeysStatus(bpy.types.Operator):
         cls.mouse_time.clear()
         cls.overall_time.clear()
         cls.prev_time = time.time()
+        cls.events.clear()
 
     def redraw_all_ui_panels(self, context):
         wm = context.window_manager
@@ -1496,6 +1547,7 @@ class ScreencastKeysStatus(bpy.types.Operator):
         else:
             # operator is called for the first time, start everything
             self.init()
+            self.events[context.window.as_pointer()] = event
             ScreencastKeysStatus.handle_add(self, context)
             ScreencastKeysStatus.overall_time.insert(0, time.time())
             context.window_manager.modal_handler_add(self)
@@ -1595,6 +1647,10 @@ class ScreenCastKeysPreferences(bpy.types.AddonPreferences):
         soft_max = 5.0,
         step = 10,
         subtype = 'TIME')
+    show_modifiers = bpy.props.BoolProperty(
+        name="Display Modifier Keys",
+        description = "Display holding modifier keys",
+        default=True)
     show_operator = bpy.props.BoolProperty(
         name="Display Last Operator",
         description = "Display the last operator used",
@@ -1661,6 +1717,8 @@ class ScreenCastKeysPreferences(bpy.types.AddonPreferences):
         row = column.row(align=True)
         row.active = pref.box_draw
         row.prop(pref, "box_width")
+        row = column.row(align=True)
+        row.prop(pref, "show_modifiers", text="Modifier Keys")
         row = column.row(align=True)
         row.prop(pref, "show_operator", text="Last Operator")
 
@@ -1748,6 +1806,8 @@ class OBJECT_PT_keys_status(bpy.types.Panel):
             row = layout.row(align=True)
             row.active = pref.box_draw
             row.prop(pref, "box_width")
+            row = layout.row(align=True)
+            row.prop(pref, "show_modifiers", text="Modifier Keys")
             row = layout.row(align=True)
             row.prop(pref, "show_operator", text="Last Operator")
 
