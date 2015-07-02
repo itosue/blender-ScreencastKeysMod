@@ -23,7 +23,7 @@ bl_info = {
     "name": "Screencast Keys Mod",
     "author": "Paulo Gomes, Bart Crouch, John E. Herrenyo, Gaia Clary, Pablo Vazquez, chromoly",
     "version": (1, 7, 2),
-    "blender": (2, 74, 0),  # (2, 74, 0) or git master
+    "blender": (2, 75, 0),
     "location": "3D View > Properties Panel > Screencast Keys",
     "warning": "",
     "description": "Display keys pressed in the 3D View, "
@@ -35,15 +35,17 @@ bl_info = {
     "category": "3D View"
 }
 
-import bgl
-import blf
-import bpy
 import time
 import datetime
-
 import functools
 from ctypes import *
 import logging
+
+
+import bpy
+import bgl
+import blf
+import bpy.props
 
 
 MOUSE_RATIO = 0.535
@@ -69,7 +71,7 @@ class Structures:
         ]
 
     class wmEvent(Structure):
-        """source/blender/windowmanager/WM_types.h: 427"""
+        """source/blender/windowmanager/WM_types.h: 430"""
         pass
 
     wmEvent._fields_ = [
@@ -77,10 +79,8 @@ class Structures:
         ('prev', POINTER(wmEvent)),
         ('type', c_short),
         ('val', c_short),
-        ('click_type', c_short),
         ('x', c_int),
         ('y', c_int),
-        ('click_time', c_double),
         ('mval', c_int * 2),
         ('utf8_buf', c_char * 6),
 
@@ -103,6 +103,8 @@ class Structures:
         ('oskey', c_short),
         ('keymodifier', c_short),
 
+        ('check_click', c_short),
+
         ('keymap_idname', c_char_p),
 
         ('tablet_data', c_void_p),  # const struct wmTabletData
@@ -115,7 +117,7 @@ class Structures:
     ]
 
     class wmOperatorType(Structure):
-        """source/blender/windowmanager/WM_types.h: 515"""
+        """source/blender/windowmanager/WM_types.h: 517"""
         _fields_ = [
             ('name', c_char_p),
             ('idname', c_char_p),
@@ -124,13 +126,8 @@ class Structures:
         ]
 
     class wmWindow(Structure):
-        """source/blender/makesdna/DNA_windowmanager_types.h: 173"""
+        """source/blender/makesdna/DNA_windowmanager_types.h: 175"""
         pass
-
-    if bpy.app.version == (2, 74, 0):
-        _drawdata = ('drawdata', c_void_p)
-    else:
-        _drawdata = ('drawdata', ListBase)
 
     wmWindow._fields_ = [
         ('next', POINTER(wmWindow)),
@@ -159,7 +156,7 @@ class Structures:
         ('lock_pie_event', c_short),
         ('last_pie_event', c_short),
 
-        ('eventstate', POINTER(wmEvent)),  # struct wmEvent
+        ('eventstate', POINTER(wmEvent)),
 
         ('curswin', c_void_p),  # struct wmSubWindow
 
@@ -169,23 +166,20 @@ class Structures:
 
         ('drawmethod', c_int),
         ('drawfail', c_int),
+        ('drawdata', ListBase),
 
-        _drawdata,  # 2.74: c_void_p, master: ListBase
+        ('queue', ListBase),
+        ('handlers', ListBase),
+        ('modalhandlers', ListBase),
 
-        ('queue', ListBase),  # ListBase
-        ('handlers', ListBase),  # ListBase
-        ('modalhandlers', ListBase),  # ListBase
+        ('subwindows', ListBase),
+        ('gesture', ListBase),
 
-        ('subwindows', ListBase),  # ListBase
-        ('gesture', ListBase),  # ListBase
+        ('stereo3d_format', c_void_p),  # struct Stereo3dFormat
     ]
-    if bpy.app.version != (2, 74, 0):
-        wmWindow._fields_.append(
-            ('stereo3d_format', c_void_p),  # struct Stereo3dFormat
-        )
 
     class wmOperator(Structure):
-        """source/blender/makesdna/DNA_windowmanager_types.h: 341"""
+        """source/blender/makesdna/DNA_windowmanager_types.h: 344"""
         pass
 
     wmOperator._fields_ = [
@@ -227,6 +221,7 @@ class Structures:
         ('op', POINTER(wmOperator)),
         ('op_area', c_void_p),  # struct ScrArea
         ('op_region', c_void_p),  # struct ARegion
+        ('op_region_type', c_short),
 
         ('ui_handle', c_void_p),
         # /* ui handler */
@@ -328,7 +323,7 @@ class ModalHandlerManager:
 
     def _get_window_modal_handlers(self, window):
         """ctypesを使い、windowに登録されている modal handlerのリストを返す。
-        idnameは認識できない物なら 'UNKNOWN' となる。
+        idnameはUIなら 'UI'、認識できない物なら 'UNKNOWN' となる。
         :rtype: list[(Structures.wmEventHandler, str, int, int)]
         """
         if not window:
@@ -347,6 +342,8 @@ class ModalHandlerManager:
             area = handler.op_area  # NULLの場合はNone
             region = handler.op_region  # NULLの場合はNone
             idname = 'UNKNOWN'
+            if handler.ui_handle:
+                idname = 'UI'
             if handler.op:
                 op = handler.op.contents
                 ot = op.type.contents
@@ -431,7 +428,7 @@ class ModalHandlerManager:
         op_area_ptr = op_region_ptr = None
         handlers = self._get_window_modal_handlers(window)
         for handler, idname, area_p, region_p in handlers:
-            if idname == 'UNKNOWN':
+            if idname in ('UI', 'UNKNOWN'):
                 continue
             if '.' not in idname and '_OT_' in idname:
                 mod, func = idname.split('_OT_')
@@ -799,6 +796,7 @@ class ModalHandlerManager:
         return _invoke
 
 
+###############################################################################
 def get_display_location(context):
     pref = get_pref(context)
     mouse_size = pref.mouse_size
@@ -828,347 +826,22 @@ def get_bounding_box(current_width, current_height, new_text):
     return current_width, current_height
 
 
-def key_to_text(key):
-    event_type, mods, count = key
-    text = ' + '.join(list(mods) + [event_type])
-    if count > 1:
-        text += ' x' + str(count)
-    return text
+# return the shape that belongs to the given event
+def map_mouse_event(event):
+    shape = False
 
+    if event == 'LEFTMOUSE':
+        shape = "left_button"
+    elif event == 'MIDDLEMOUSE':
+        shape = "middle_button"
+    elif event == 'RIGHTMOUSE':
+        shape = "right_button"
+    elif event == 'WHEELDOWNMOUSE':
+        shape = "middle_down_button"
+    elif event == 'WHEELUPMOUSE':
+        shape = "middle_up_button"
 
-def draw_callback_px_text(cls, context):
-    pref = get_pref(context)
-    if not mm.is_running(context):
-        return
-
-    font_size = pref.font_size
-    mouse_size = pref.mouse_size
-    pos_x, pos_y = get_display_location(context)
-    if pos_x == pos_y == -1:
-        return
-    label_time_max = pref.fade_time
-
-    # draw text in the 3D View
-    blf.size(0, pref.font_size, 72)
-    blf.enable(0, blf.SHADOW)
-    blf.shadow_offset(0, 1, -1)
-    blf.shadow(0, 5, 0.0, 0.0, 0.0, 0.8)
-
-    font_color_r, font_color_g, font_color_b, font_color_alpha = \
-        pref.text_color
-    final = 0
-    row_count = len(cls.key)
-
-    keypos_x = pos_x
-
-    if pref.mouse_position == 'left':
-        keypos_x += mouse_size * MOUSE_RATIO * 1.7
-    if pref.mouse != 'icon':
-        keypos_x -= mouse_size * MOUSE_RATIO
-    if pref.mouse_position == 'right' and pref.mouse != 'icon':
-        keypos_x = pos_x
-
-    shift = 0
-
-    # we want to make sure we can shift vertically the text if the mouse is
-    # big, but don't care if aligned to right
-    if mouse_size > font_size * row_count and \
-            not pref.mouse_position == 'right':
-        shift = (mouse_size - font_size * row_count) / 2
-
-    text_width, text_height = 0, 0
-    row_count = 0
-
-    for i in range(len(cls.key)):
-        label_time = time.time() - cls.time[i]
-        if label_time < label_time_max:
-            # only display key-presses of last 2 seconds
-            if label_time > (label_time_max / 1.2):
-                blf.blur(0, 1)
-            if label_time > (label_time_max / 1.1):
-                blf.blur(0, 3)
-            keypos_y = pos_y + shift + font_size * (i + 0.1)
-
-            blf.position(0, keypos_x, keypos_y, 0)
-            alpha = min(1.0, max(0.0, label_time_max * (label_time_max -
-                                                        label_time)))
-            bgl.glColor4f(font_color_r, font_color_g, font_color_b,
-                          font_color_alpha * alpha)
-            text = key_to_text(cls.key[i])
-            blf.draw(0, text)
-            text_width, text_height = get_bounding_box(text_width, text_height,
-                                                       text)
-            row_count += 1
-            final = i + 1
-        else:
-            break
-
-    # remove blurriness 
-
-    # disable shadows so they don't appear all over blender
-    blf.blur(0, 0)
-    blf.disable(0, blf.SHADOW)
-
-    # get rid of status texts that aren't displayed anymore
-    cls.key = cls.key[:final]
-    cls.time = cls.time[:final]
-
-    # draw graphical representation of the mouse
-    if pref.mouse == 'icon':
-        for shape in ["mouse", "left_button", "middle_button", "right_button"]:
-            draw_mouse(context, shape, "outline", font_color_alpha * 0.4)
-        final = 0
-
-        for i in range(len(cls.mouse)):
-            click_time = time.time() - cls.mouse_time[i]
-            if click_time < 2:
-                shape = map_mouse_event(cls.mouse[i])
-                if shape:
-                    alpha = min(1.0, max(0.0, 2 * (2 - click_time)))
-                    draw_mouse(context, shape, "filled", alpha)
-                final = i + 1
-            else:
-                break
-
-    # get rid of mouse clicks that aren't displayed anymore
-    cls.mouse = cls.mouse[:final]
-    cls.mouse_time = cls.mouse_time[:final]
-
-
-def draw_callback_px_box(cls, context):
-    pref = get_pref(context)
-
-    if not mm.is_running(context):
-        return
-
-    font_size = pref.font_size
-    mouse_size = pref.mouse_size
-
-    if pref.mouse_position == 'right':
-        mouse_size = 25
-
-    box_draw = pref.box_draw
-    pos_x, pos_y = get_display_location(context)
-    if pos_x == pos_y == -1:
-        return
-
-    # get text-width/height to resize the box
-    blf.size(0, pref.font_size, 72)
-    box_width, box_height = pref.box_width, 0
-    final = 0
-    row_count = 0
-    box_hide = pref.box_hide
-    label_time_max = pref.fade_time
-
-    for i in range(len(cls.key)):
-        label_time = time.time() - cls.time[i]
-
-        if label_time < label_time_max:
-            # only display key-presses of last 4 seconds
-            text = key_to_text(cls.key[i])
-            box_width, box_height = get_bounding_box(box_width, box_height,
-                                                     text)
-            row_count += 1
-            final = i + 1
-            box_hide = False
-        else:
-            break
-
-    # Got the size right, now draw box using proper colors
-    box_color_r, box_color_g, box_color_b, box_color_alpha = pref.box_color
-
-    if box_draw and not box_hide:
-        padding_x = 16
-        padding_y = 12
-        x0 = max(0, pos_x - padding_x)
-        y0 = max(0, pos_y - padding_y)
-        x1 = pos_x + box_width + mouse_size * MOUSE_RATIO * 1.3 + padding_x
-        y1 = pos_y + max(mouse_size, font_size * row_count) + padding_y
-        positions = [[x0, y0], [x0, y1], [x1, y1], [x1, y0]]
-        settings = [[bgl.GL_QUADS, min(0.0, box_color_alpha)],
-                    [bgl.GL_LINE_LOOP, min(0.0, box_color_alpha)]]
-
-        for mode, box_alpha in settings:
-            bgl.glEnable(bgl.GL_BLEND)
-            bgl.glBegin(mode)
-            bgl.glColor4f(box_color_r, box_color_g, box_color_b,
-                          box_color_alpha)
-            for v1, v2 in positions:
-                bgl.glVertex2f(v1, v2)
-            bgl.glEnd()
-
-    py = pos_y - 12
-    if pref.show_modifiers:
-        py = draw_modifiers(cls, context, pos_x, py)
-
-    if pref.show_operator:
-        draw_last_operator(context, pos_x, py)
-
-    if pref.timer_show:
-        draw_timer(context, pos_x, pos_y)
-
-    # get rid of status texts that aren't displayed anymore
-    cls.key = cls.key[:final]
-    cls.time = cls.time[:final]
-
-
-def draw_callback_px(cls, context):
-    window = context.window
-    space = context.space_data
-    if window != cls.window or space != cls.space:
-        return
-    draw_callback_px_text(cls, context)
-    draw_callback_px_box(cls, context)
-
-
-def draw_modifiers(cls, context, pos_x, pos_y):
-    pref = get_pref(context)
-    font_color_r, font_color_g, font_color_b, font_color_alpha = pref.text_color
-
-    keys = []
-    active_window = mm.active_window(context)
-    if active_window:
-        event = cls.events[active_window.as_pointer()]
-        if event.shift:
-            keys.append('Shift')
-        if event.ctrl:
-            keys.append('Ctrl')
-        if event.alt:
-            keys.append('Alt')
-        if event.oskey:
-            keys.append('Cmd')
-
-    blf.size(0, pref.font_size, 54)
-    text = ' + '.join(keys)
-    if text:
-        _, th = blf.dimensions(0, text)
-        pos_y -= th + 5
-    else:
-        _, th = blf.dimensions(0, 'Shift + Ctrl + Alt + Cmd')
-        pos_y -= th + 5
-    if text:
-        blf.enable(0, blf.SHADOW)
-        blf.shadow_offset(0, 1, -1)
-        blf.shadow(0, 5, 0.0, 0.0, 0.0, 0.8)
-        blf.position(0, pos_x - 14, pos_y, 0)
-        bgl.glColor4f(font_color_r, font_color_g, font_color_b,
-                      font_color_alpha * 0.8)
-        blf.draw(0, text)
-        blf.disable(0, blf.SHADOW)
-    return pos_y
-
-
-def draw_last_operator(context, pos_x, pos_y):
-    wm = context.window_manager
-    pref = get_pref(context)
-    font_color_r, font_color_g, font_color_b, font_color_alpha = pref.text_color
-
-    if wm.operators:
-        last_operator = wm.operators[-1].bl_label
-        text = "Last: %s" % last_operator
-        blf.enable(0, blf.SHADOW)
-        blf.shadow_offset(0, 1, -1)
-        blf.shadow(0, 5, 0.0, 0.0, 0.0, 0.8)
-        blf.size(0, pref.font_size, 36)
-        _, th = blf.dimensions(0, text)
-        pos_y -= th + 5
-        blf.position(0, pos_x - 14, pos_y, 0)
-        bgl.glColor4f(font_color_r, font_color_g, font_color_b,
-                      font_color_alpha * 0.8)
-        blf.draw(0, text)
-        blf.disable(0, blf.SHADOW)
-    return pos_y
-
-
-def draw_timer(context, pos_x, pos_y):
-    pref = get_pref(context)
-    #calculate overall time
-    overall_time = datetime.timedelta(
-        seconds=int(time.time() - ScreencastKeysStatus.overall_time[0]))
-
-    timer_color_r, timer_color_g, timer_color_b, timer_color_alpha = \
-        pref.timer_color
-    pos_x = context.region.width - (pref.timer_size * 12) + 12
-    pos_y = 10
-
-    #draw time
-    blf.size(0, pref.timer_size, 72)
-    blf.position(0, pos_x, pos_y, 0)
-    bgl.glColor4f(timer_color_r, timer_color_g, timer_color_b,
-                  timer_color_alpha)
-    blf.draw(0, "Elapsed Time: %s" % overall_time)
-
-
-def draw_mouse(context, shape, style, alpha):
-    # shape and position
-    pref = get_pref(context)
-    mouse_size = pref.mouse_size
-    font_size = pref.font_size
-
-    pos_x, pos_y = get_display_location(context)
-
-    if pref.mouse_position == 'left':
-        offset_x = pos_x
-    if pref.mouse_position == 'right':
-        offset_x = context.region.width - pos_x - (mouse_size * MOUSE_RATIO)
-
-    offset_y = pos_y
-    if font_size > mouse_size:
-        offset_y += (font_size - mouse_size) / 2
-
-    shape_data = get_shape_data(shape)
-
-    bgl.glTranslatef(offset_x, offset_y, 0)
-
-    # color
-    r, g, b, a = pref.text_color
-    bgl.glEnable(bgl.GL_BLEND)
-    bgl.glColor4f(r, g, b, alpha)
-
-    # inner shape for filled style
-    if style == "filled":
-        inner_shape = []
-        for i in shape_data:
-            inner_shape.append(i[0])
-
-    # outer shape
-    for i in shape_data:
-        shape_segment = i
-        shape_segment[0] = [mouse_size * k for k in shape_segment[0]]
-        shape_segment[1] = [mouse_size * k for k in shape_segment[1]]
-        shape_segment[2] = [mouse_size * k for k in shape_segment[2]]
-        shape_segment[3] = [mouse_size * k for k in shape_segment[3]]
-
-        # create the buffer
-        shape_buffer = bgl.Buffer(bgl.GL_FLOAT, [4, 3], shape_segment)
-
-        # create the map and draw the triangle fan
-        bgl.glMap1f(bgl.GL_MAP1_VERTEX_3, 0.0, 1.0, 3, 4, shape_buffer)
-        bgl.glEnable(bgl.GL_MAP1_VERTEX_3)
-
-        if style == "outline":
-            bgl.glBegin(bgl.GL_LINE_STRIP)
-        else:  # style == "filled"
-            bgl.glBegin(bgl.GL_TRIANGLE_FAN)
-        for j in range(10):
-            bgl.glEvalCoord1f(j / 10.0)
-        x, y, z = shape_segment[3]
-
-        # make sure the last vertex is indeed the last one, to avoid gaps
-        bgl.glVertex3f(x, y, z)
-        bgl.glEnd()
-        bgl.glDisable(bgl.GL_MAP1_VERTEX_3)
-
-    # draw interior
-    if style == "filled":
-        bgl.glBegin(bgl.GL_TRIANGLE_FAN)
-        for i in inner_shape:
-            j = [mouse_size * k for k in i]
-            x, y, z = j
-            bgl.glVertex3f(x, y, z)
-        bgl.glEnd()
-
-    bgl.glTranslatef(-offset_x, -offset_y, 0)
+    return shape
 
 
 # hardcoded data to draw the graphical represenation of the mouse
@@ -1324,27 +997,350 @@ def get_shape_data(shape):
     return data
 
 
-# return the shape that belongs to the given event
-def map_mouse_event(event):
-    shape = False
+def draw_mouse(context, shape, style, alpha):
+    # shape and position
+    pref = get_pref(context)
+    mouse_size = pref.mouse_size
+    font_size = pref.font_size
 
-    if event == 'LEFTMOUSE':
-        shape = "left_button"
-    elif event == 'MIDDLEMOUSE':
-        shape = "middle_button"
-    elif event == 'RIGHTMOUSE':
-        shape = "right_button"
-    elif event == 'WHEELDOWNMOUSE':
-        shape = "middle_down_button"
-    elif event == 'WHEELUPMOUSE':
-        shape = "middle_up_button"
+    pos_x, pos_y = get_display_location(context)
 
-    return shape
+    if pref.mouse_position == 'left':
+        offset_x = pos_x
+    if pref.mouse_position == 'right':
+        offset_x = context.region.width - pos_x - (mouse_size * MOUSE_RATIO)
+
+    offset_y = pos_y
+    if font_size > mouse_size:
+        offset_y += (font_size - mouse_size) / 2
+
+    shape_data = get_shape_data(shape)
+
+    bgl.glTranslatef(offset_x, offset_y, 0)
+
+    # color
+    r, g, b, a = pref.text_color
+    bgl.glEnable(bgl.GL_BLEND)
+    bgl.glColor4f(r, g, b, alpha)
+
+    # inner shape for filled style
+    if style == "filled":
+        inner_shape = []
+        for i in shape_data:
+            inner_shape.append(i[0])
+
+    # outer shape
+    for i in shape_data:
+        shape_segment = i
+        shape_segment[0] = [mouse_size * k for k in shape_segment[0]]
+        shape_segment[1] = [mouse_size * k for k in shape_segment[1]]
+        shape_segment[2] = [mouse_size * k for k in shape_segment[2]]
+        shape_segment[3] = [mouse_size * k for k in shape_segment[3]]
+
+        # create the buffer
+        shape_buffer = bgl.Buffer(bgl.GL_FLOAT, [4, 3], shape_segment)
+
+        # create the map and draw the triangle fan
+        bgl.glMap1f(bgl.GL_MAP1_VERTEX_3, 0.0, 1.0, 3, 4, shape_buffer)
+        bgl.glEnable(bgl.GL_MAP1_VERTEX_3)
+
+        if style == "outline":
+            bgl.glBegin(bgl.GL_LINE_STRIP)
+        else:  # style == "filled"
+            bgl.glBegin(bgl.GL_TRIANGLE_FAN)
+        for j in range(10):
+            bgl.glEvalCoord1f(j / 10.0)
+        x, y, z = shape_segment[3]
+
+        # make sure the last vertex is indeed the last one, to avoid gaps
+        bgl.glVertex3f(x, y, z)
+        bgl.glEnd()
+        bgl.glDisable(bgl.GL_MAP1_VERTEX_3)
+
+    # draw interior
+    if style == "filled":
+        bgl.glBegin(bgl.GL_TRIANGLE_FAN)
+        for i in inner_shape:
+            j = [mouse_size * k for k in i]
+            x, y, z = j
+            bgl.glVertex3f(x, y, z)
+        bgl.glEnd()
+
+    bgl.glTranslatef(-offset_x, -offset_y, 0)
+
+
+def draw_callback_px_text(cls, context):
+    pref = get_pref(context)
+    if not mm.is_running(context):
+        return
+
+    font_size = pref.font_size
+    dpi = context.user_preferences.system.dpi
+    mouse_size = pref.mouse_size
+    pos_x, pos_y = get_display_location(context)
+    if pos_x == pos_y == -1:
+        return
+    label_time_max = pref.fade_time
+
+    # draw text in the 3D View
+    blf.size(0, pref.font_size, 72)
+    blf.enable(0, blf.SHADOW)
+    blf.shadow_offset(0, 1, -1)
+    blf.shadow(0, 5, 0.0, 0.0, 0.0, 0.8)
+
+    font_color_r, font_color_g, font_color_b, font_color_alpha = \
+        pref.text_color
+    final = 0
+    row_count = len(cls.events)
+
+    keypos_x = pos_x
+
+    if pref.mouse_position == 'left':
+        keypos_x += mouse_size * MOUSE_RATIO * 1.7
+    if pref.mouse != 'icon':
+        keypos_x -= mouse_size * MOUSE_RATIO
+    if pref.mouse_position == 'right' and pref.mouse != 'icon':
+        keypos_x = pos_x
+
+    shift = 0
+
+    # we want to make sure we can shift vertically the text if the mouse is
+    # big, but don't care if aligned to right
+    if mouse_size > font_size * row_count and \
+            not pref.mouse_position == 'right':
+        shift = (mouse_size - font_size * row_count) / 2
+
+    text_width, text_height = 0, 0
+    row_count = 0
+
+    for i, (t, event_type, mods, count) in enumerate(cls.events):
+        label_time = time.time() - t
+        # only display key-presses of last 2 seconds
+        if label_time > (label_time_max / 1.2):
+            blf.blur(0, 1)
+        if label_time > (label_time_max / 1.1):
+            blf.blur(0, 3)
+        keypos_y = pos_y + shift + font_size * (i + 0.1)
+
+        blf.position(0, keypos_x, keypos_y, 0)
+        alpha = min(1.0, max(0.0, label_time_max * (label_time_max -
+                                                    label_time)))
+        bgl.glColor4f(font_color_r, font_color_g, font_color_b,
+                      font_color_alpha * alpha)
+        text = key_to_text(event_type, mods, count)
+        blf.draw(0, text)
+        text_width, text_height = get_bounding_box(text_width, text_height,
+                                                   text)
+        row_count += 1
+
+    # remove blurriness 
+
+    # disable shadows so they don't appear all over blender
+    blf.blur(0, 0)
+    blf.disable(0, blf.SHADOW)
+
+    # draw graphical representation of the mouse
+    if pref.mouse == 'icon':
+        for shape in ["mouse", "left_button", "middle_button", "right_button"]:
+            draw_mouse(context, shape, "outline", font_color_alpha * 0.4)
+
+        for i, (t, mouse_event) in enumerate(cls.mouse_events):
+            click_time = time.time() - t
+            shape = map_mouse_event(mouse_event)
+            if shape:
+                alpha = min(1.0, max(0.0, 2 * (2 - click_time)))
+                draw_mouse(context, shape, "filled", alpha)
+
+
+def draw_modifiers(cls, context, pos_x, pos_y):
+    pref = get_pref(context)
+    font_color_r, font_color_g, font_color_b, font_color_alpha = pref.text_color
+
+    keys = []
+    active_window = mm.active_window(context)
+    if active_window:
+        event = cls.window_event[active_window.as_pointer()]
+        if event.shift:
+            keys.append('Shift')
+        if event.ctrl:
+            keys.append('Ctrl')
+        if event.alt:
+            keys.append('Alt')
+        if event.oskey:
+            keys.append('Cmd')
+
+    blf.size(0, pref.font_size, 54)
+    text = ' + '.join(keys)
+    if text:
+        _, th = blf.dimensions(0, text)
+        pos_y -= th + 5
+    else:
+        _, th = blf.dimensions(0, 'Shift + Ctrl + Alt + Cmd')
+        pos_y -= th + 5
+    if text:
+        blf.enable(0, blf.SHADOW)
+        blf.shadow_offset(0, 1, -1)
+        blf.shadow(0, 5, 0.0, 0.0, 0.0, 0.8)
+        blf.position(0, pos_x - 14, pos_y, 0)
+        bgl.glColor4f(font_color_r, font_color_g, font_color_b,
+                      font_color_alpha * 0.8)
+        blf.draw(0, text)
+        blf.disable(0, blf.SHADOW)
+    return pos_y
+
+
+def draw_last_operator(context, pos_x, pos_y):
+    wm = context.window_manager
+    pref = get_pref(context)
+    font_color_r, font_color_g, font_color_b, font_color_alpha = pref.text_color
+
+    if wm.operators:
+        last_operator = wm.operators[-1].bl_label
+        text = "Last: %s" % last_operator
+        blf.enable(0, blf.SHADOW)
+        blf.shadow_offset(0, 1, -1)
+        blf.shadow(0, 5, 0.0, 0.0, 0.0, 0.8)
+        blf.size(0, pref.font_size, 36)
+        _, th = blf.dimensions(0, text)
+        pos_y -= th + 5
+        blf.position(0, pos_x - 14, pos_y, 0)
+        bgl.glColor4f(font_color_r, font_color_g, font_color_b,
+                      font_color_alpha * 0.8)
+        blf.draw(0, text)
+        blf.disable(0, blf.SHADOW)
+    return pos_y
+
+
+def draw_timer(cls, context, pos_x, pos_y):
+    pref = get_pref(context)
+    # calculate overall time
+    t = int(time.time() - cls.overall_time)
+    overall_time = datetime.timedelta(seconds=t)
+
+    pos_x = context.region.width - (pref.timer_size * 12) + 12
+    pos_y = 10
+
+    # draw time
+    blf.size(0, pref.timer_size, 72)
+    blf.position(0, pos_x, pos_y, 0)
+    bgl.glColor4f(*pref.timer_color)
+    blf.draw(0, "Elapsed Time: %s" % overall_time)
+
+
+def draw_callback_px_box(cls, context, event_text):
+    pref = get_pref(context)
+
+    if not mm.is_running(context):
+        return
+
+    font_size = pref.font_size
+    mouse_size = pref.mouse_size
+
+    if pref.mouse_position == 'right':
+        mouse_size = 25
+
+    box_draw = pref.box_draw
+    pos_x, pos_y = get_display_location(context)
+    if pos_x == pos_y == -1:
+        return
+
+    # get text-width/height to resize the box  blf.size(0, pref.font_size, 72)
+    box_width, box_height = pref.box_width, 0
+    row_count = 0
+    box_hide = pref.box_hide
+
+    for i, (t, event_type, mods, count) in enumerate(cls.events):
+        # only display key-presses of last 4 seconds
+        text = key_to_text(event_type, mods, count)
+        box_width, box_height = get_bounding_box(box_width, box_height,
+                                                 text)
+        row_count += 1
+        box_hide = False
+
+    # Got the size right, now draw box using proper colors
+    box_color_r, box_color_g, box_color_b, box_color_alpha = pref.box_color
+
+    if box_draw and not box_hide:
+        padding_x = 16
+        padding_y = 12
+        x0 = max(0, pos_x - padding_x)
+        y0 = max(0, pos_y - padding_y)
+        x1 = pos_x + box_width + mouse_size * MOUSE_RATIO * 1.3 + padding_x
+        y1 = pos_y + max(mouse_size, font_size * row_count) + padding_y
+        positions = [[x0, y0], [x0, y1], [x1, y1], [x1, y0]]
+        settings = [[bgl.GL_QUADS, min(0.0, box_color_alpha)],
+                    [bgl.GL_LINE_LOOP, min(0.0, box_color_alpha)]]
+
+        for mode, box_alpha in settings:
+            bgl.glEnable(bgl.GL_BLEND)
+            bgl.glBegin(mode)
+            bgl.glColor4f(box_color_r, box_color_g, box_color_b,
+                          box_color_alpha)
+            for v1, v2 in positions:
+                bgl.glVertex2f(v1, v2)
+            bgl.glEnd()
+
+    py = pos_y - 12
+    if pref.show_modifiers:
+        py = draw_modifiers(cls, context, pos_x, py)
+
+    if pref.show_operator:
+        draw_last_operator(context, pos_x, py)
+
+    if pref.timer_show:
+        draw_timer(cls, context, pos_x, pos_y)
+
+
+def key_to_text(event_type, mods, count):
+    text = ' + '.join(list(mods) + [event_type])
+    if count > 1:
+        text += ' x' + str(count)
+    return text
+
+
+def make_event_text(cls, context):
+    pref = get_pref(context)
+
+    # cleanup
+    cur_time = time.time()
+    for i, (t, event_type, mods, count) in enumerate(cls.events):
+        if cur_time - t > pref.fade_time:
+            cls.events[i:] = []
+            break
+    for i, (t, mouse_event) in enumerate(cls.mouse_events):
+        click_time = time.time() - t
+        if click_time >= 2.0:
+            cls.mouse_events[i:] = []
+            break
+
+    # make text
+    ls = []
+    for t, event_type, mods, count in cls.events:
+        text = ' + '.join(list(mods) + [event_type])
+        if count > 1:
+            text += ' x' + str(count)
+        ls.append(text)
+    return ls
+
+
+def draw_callback_px(cls, context):
+    if not mm.is_running(context):
+        return
+    window = context.window
+    space = context.space_data
+    if window != cls.window or space != cls.space:
+        return
+    # pos_x, pos_y = get_display_location(context)
+    # if pos_x == pos_y == -1:
+    #     return
+    event_text = make_event_text(cls, context)
+    draw_callback_px_box(cls, context, event_text)
+    draw_callback_px_text(cls, context)
 
 
 def invoke_callback(context, event, dst, src):
     window = context.window
-    dst.__class__.events[window.as_pointer()] = event
+    dst.__class__.window_event[window.as_pointer()] = event
 
 
 mm = ModalHandlerManager('view3d.screencast_keys', callback=invoke_callback)
@@ -1359,17 +1355,15 @@ class ScreencastKeysStatus(bpy.types.Operator):
     _handle = None
     _timer = None
 
-    key = []  # [[type, [mods], count], ...]
-    time = []
-    mouse = []
-    mouse_time = []
+    events = []  # [[time, event_type, [modifier_keys, count]], ...]
+    mouse_events = []  # [[time, event_type], ...]
 
-    overall_time = []
+    prev_time = 0.0  # time of lst event
+    overall_time = 0.0
+
+    window_event = {}  # {Window.as_pointer(): Event, ...}
 
     TIMER_STEP = 0.075
-    prev_time = 0.0
-
-    events = {}
 
     # 描画対象
     window = None
@@ -1382,16 +1376,14 @@ class ScreencastKeysStatus(bpy.types.Operator):
             wm.event_timer_remove(cls._timer)
         cls._timer = wm.event_timer_add(cls.TIMER_STEP, window)
 
-    @staticmethod
-    def handle_add(self, context):
-        cls = ScreencastKeysStatus
+    @classmethod
+    def handle_add(cls, context):
         cls._handle = bpy.types.SpaceView3D.draw_handler_add(
             draw_callback_px, (cls, context), 'WINDOW', 'POST_PIXEL')
         cls.timer_add(context, context.window)
 
-    @staticmethod
-    def handle_remove(context):
-        cls = ScreencastKeysStatus
+    @classmethod
+    def handle_remove(cls, context):
         if cls._handle is not None:
             bpy.types.SpaceView3D.draw_handler_remove(cls._handle, 'WINDOW')
             cls._handle = None
@@ -1401,7 +1393,7 @@ class ScreencastKeysStatus(bpy.types.Operator):
 
     @classmethod
     def test_window_space(cls, context):
-        # 描画対象のspaceが無くてもまだ生きているwindowからの切り替えは行わない
+        # 描画対象の3DViewが無くてもまだ生きているwindowからの切り替えは行わない
         wm = context.window_manager
         windows = list(wm.windows)
         if cls.window:
@@ -1440,7 +1432,7 @@ class ScreencastKeysStatus(bpy.types.Operator):
         ignore_event = False
         if event.type in ('MOUSEMOVE', 'INBETWEEN_MOUSEMOVE'):
             if (event.mouse_x == event.mouse_prev_x and
-                        event.mouse_y == event.mouse_prev_y):
+                    event.mouse_y == event.mouse_prev_y):
                 ignore_event = True
         elif event.type == 'WINDOW_DEACTIVATE':
             ignore_event = True
@@ -1473,7 +1465,7 @@ class ScreencastKeysStatus(bpy.types.Operator):
         numbers = {'ZERO': '0', 'ONE': '1', 'TWO': '2', 'THREE': '3',
                    'FOUR': '4', 'FIVE': '5', 'SIX': '6', 'SEVEN': '7',
                    'EIGHT': '8', 'NINE': '9'}
-        if event.value == 'PRESS' or (event.value == 'RELEASE' and \
+        if event.value == 'PRESS' or (event.value == 'RELEASE' and
                 self.last_activity == 'KEYBOARD' and event.type in mouse_keys):
             # add key-press to display-list
             mods = []
@@ -1491,18 +1483,16 @@ class ScreencastKeysStatus(bpy.types.Operator):
                 if event_type in numbers:
                     event_type = numbers[event_type]
                 # print("Recorded as key")
-                if (self.key and self.key[0][0] == event_type and
-                        self.key[0][1] == mods):
-                    self.key[0][2] += 1
-                    self.time[0] = time.time()
+                if (self.events and self.events[0][1] == event_type and
+                        self.events[0][2] == mods):
+                    self.events[0][3] += 1
+                    self.events[0][0] = time.time()
                 else:
-                    self.key.insert(0, [event_type, mods, 1])
-                    self.time.insert(0, time.time())
+                    self.events.insert(0, [time.time(), event_type, mods, 1])
 
             elif event.type in mouse_keys and pref.mouse == 'icon':
                 # print("Recorded as mouse press")
-                self.mouse.insert(0, event.type)
-                self.mouse_time.insert(0, time.time())
+                self.mouse_events.insert(0, [time.time(), event.type])
 
             if event.type in mouse_keys:
                 self.last_activity = 'MOUSE'
@@ -1513,17 +1503,7 @@ class ScreencastKeysStatus(bpy.types.Operator):
         return {'PASS_THROUGH'}
 
     # def cancel(self, context):
-    #     ScreencastKeysStatus.handle_remove(context)
-
-    def init(self):
-        cls = self.__class__
-        cls.key.clear()
-        cls.time.clear()
-        cls.mouse.clear()
-        cls.mouse_time.clear()
-        cls.overall_time.clear()
-        cls.prev_time = time.time()
-        cls.events.clear()
+    #     self.handle_remove(context)
 
     def redraw_all_ui_panels(self, context):
         wm = context.window_manager
@@ -1534,11 +1514,18 @@ class ScreencastKeysStatus(bpy.types.Operator):
                         if region.type == 'UI':
                             region.tag_redraw()
 
+    def init(self):
+        cls = self.__class__
+        cls.events.clear()
+        cls.mouse_events.clear()
+        cls.overall_time = time.time()
+        cls.prev_time = time.time()
+        cls.window_event.clear()
+
     @mm.invoke
     def invoke(self, context, event):
-        # if context.area.type == 'VIEW_3D':
+        cls = self.__class__
         if mm.is_running(context):
-            cls = self.__class__
             if cls.window != context.window or cls.space != context.space_data:
                 # 描画対象のwindow,spaceの切り替え
                 if cls.window and cls.space:
@@ -1554,7 +1541,7 @@ class ScreencastKeysStatus(bpy.types.Operator):
                 return {'CANCELLED', 'PASS_THROUGH'}, False
             else:
                 # 同window,同spaceで呼び出された場合は終了
-                ScreencastKeysStatus.handle_remove(context)
+                self.handle_remove(context)
                 if cls.window and cls.space:
                     for area in cls.window.screen.areas:
                         if area.spaces.active == cls.space:
@@ -1562,18 +1549,18 @@ class ScreencastKeysStatus(bpy.types.Operator):
                 self.redraw_all_ui_panels(context)
             return {'CANCELLED'}
         else:
-            # operator is called for the first time, start everything
-            self.init()
-            self.events[context.window.as_pointer()] = event
-            ScreencastKeysStatus.handle_add(self, context)
-            ScreencastKeysStatus.overall_time.insert(0, time.time())
-            context.window_manager.modal_handler_add(self)
-            self.redraw_all_ui_panels(context)
-            return {'RUNNING_MODAL'}
-            # else:
-            #     self.report({'WARNING'},
-            #                 "3D View not found, can't run Screencast Keys")
-            #     return {'CANCELLED'}
+            if context.area.type == 'VIEW_3D':
+                # operator is called for the first time, start everything
+                self.init()
+                self.window_event[context.window.as_pointer()] = event
+                self.handle_add(context)
+                context.window_manager.modal_handler_add(self)
+                self.redraw_all_ui_panels(context)
+                return {'RUNNING_MODAL'}
+            else:
+                self.report({'WARNING'},
+                            "3D View not found, can't run Screencast Keys")
+                return {'CANCELLED'}
 
 
 class ScreencastKeysTimerReset(bpy.types.Operator):
@@ -1583,7 +1570,7 @@ class ScreencastKeysTimerReset(bpy.types.Operator):
     bl_description = "Set the timer back to zero"
 
     def execute(self, context):
-        ScreencastKeysStatus.overall_time = [time.time()]
+        ScreencastKeysStatus.overall_time = time.time()
         return {'FINISHED'}
 
 
@@ -1675,7 +1662,8 @@ class ScreenCastKeysPreferences(bpy.types.AddonPreferences):
         default=True)
     timer_show = bpy.props.BoolProperty(
         name="Display Timer",
-        description="Counter of the elapsed time in H:MM:SS since the script started",
+        description="Counter of the elapsed time in H:MM:SS "
+                    "since the script started",
         default=False)
     timer_size = bpy.props.IntProperty(
         name="Time Size",
