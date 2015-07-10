@@ -428,7 +428,7 @@ class ModalHandlerManager:
         op_area_ptr = op_region_ptr = None
         handlers = self._get_window_modal_handlers(window)
         for handler, idname, area_p, region_p in handlers:
-            if idname in ('UI', 'UNKNOWN'):
+            if idname == 'UNKNOWN':
                 continue
             if '.' not in idname and '_OT_' in idname:
                 mod, func = idname.split('_OT_')
@@ -1440,7 +1440,10 @@ class ScreencastKeysStatus(bpy.types.Operator):
         # if not ignore_event:
         self.test_window_space(context)
 
-        if event.type != 'TIMER' or time.time() - self.prev_time > self.TIMER_STEP:
+        if (not (event.type.startswith('TIMER') or
+                 event.type in ('MOUSEMOVE', 'INBETWEEN_MOUSEMOVE') or
+                 ignore_event) or
+                time.time() - self.prev_time > self.TIMER_STEP):
             if self.window and self.space:
                 for area in self.window.screen.areas:
                     if area.spaces.active == self.space:
