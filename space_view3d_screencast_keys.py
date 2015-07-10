@@ -22,7 +22,7 @@
 bl_info = {
     "name": "Screencast Keys Mod",
     "author": "Paulo Gomes, Bart Crouch, John E. Herrenyo, Gaia Clary, Pablo Vazquez, chromoly",
-    "version": (1, 7, 2),
+    "version": (1, 7, 3),
     "blender": (2, 75, 0),
     "location": "3D View > Properties Panel > Screencast Keys",
     "warning": "",
