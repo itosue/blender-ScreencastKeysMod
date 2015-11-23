@@ -71,7 +71,7 @@ class Structures:
         ]
 
     class wmEvent(Structure):
-        """source/blender/windowmanager/WM_types.h: 430"""
+        """source/blender/windowmanager/WM_types.h: 431"""
         pass
 
     wmEvent._fields_ = [
@@ -132,6 +132,7 @@ class Structures:
     wmWindow._fields_ = [
         ('next', POINTER(wmWindow)),
         ('prev', POINTER(wmWindow)),
+
         ('ghostwin', c_void_p),
 
         ('screen', c_void_p),  # struct bScreen
@@ -324,7 +325,7 @@ class ModalHandlerManager:
     def _get_window_modal_handlers(self, window):
         """ctypesを使い、windowに登録されている modal handlerのリストを返す。
         idnameはUIなら 'UI'、認識できない物なら 'UNKNOWN' となる。
-        :rtype: list[(Structures.wmEventHandler, str, int, int)]
+        :rtype: list[(Structures.wmEventHandler, str, int, int, int)]
         """
         if not window:
             return []
@@ -349,7 +350,8 @@ class ModalHandlerManager:
                 ot = op.type.contents
                 if ot.idname:
                     idname = ot.idname.decode()
-            handlers.append((handler, idname, area, region))
+            handlers.append((handler, idname, area, region,
+                             handler.op_region_type))
             ptr = handler.next
 
         return handlers
@@ -426,8 +428,9 @@ class ModalHandlerManager:
 
         restart = False
         op_area_ptr = op_region_ptr = None
+        op_region_type = -1
         handlers = self._get_window_modal_handlers(window)
-        for handler, idname, area_p, region_p in handlers:
+        for handler, idname, area_p, region_p, region_t in handlers:
             if idname == 'UNKNOWN':
                 continue
             if '.' not in idname and '_OT_' in idname:
@@ -438,6 +441,7 @@ class ModalHandlerManager:
             if idname_py == self.idname:
                 op_area_ptr = cast(area_p, c_void_p)
                 op_region_ptr = cast(region_p, c_void_p)
+                op_region_type = region_t
                 break
             else:
                 for m in self.managers:
@@ -464,7 +468,8 @@ class ModalHandlerManager:
                 handlers_prev = handlers
                 handlers = self._get_window_modal_handlers(window)
                 if len(handlers) == len(handlers_prev) + 1:
-                    handler, idname, _area_p, _region_p = handlers[0]
+                    handler, idname, _area_p, _region_p, _region_t = \
+                        handlers[0]
                     if handler.op:
                         if '.' not in idname and '_OT_' in idname:
                             mod, func = idname.split('_OT_')
@@ -476,6 +481,7 @@ class ModalHandlerManager:
                                 handler.op_area = op_area_ptr
                             if op_region_ptr:
                                 handler.op_region = op_region_ptr
+                                handler.op_region_type = op_region_type
                                 logger.debug(
                                     'Set wmEventHandler.op_region, '
                                     'wmEventHandler.op_area')
@@ -1607,7 +1613,7 @@ class ScreenCastKeysPreferences(bpy.types.AddonPreferences):
         default=(1.0, 1.0, 1.0, 1.0),
         min=0.1,
         max=1,
-        subtype='COLOR',
+        subtype='COLOR_GAMMA',
         size=4)
     box_color = bpy.props.FloatVectorProperty(
         name="Box Color",
@@ -1615,7 +1621,7 @@ class ScreenCastKeysPreferences(bpy.types.AddonPreferences):
         default=(0.0, 0.0, 0.0, 0.3),
         min=0,
         max=1,
-        subtype='COLOR',
+        subtype='COLOR_GAMMA',
         size=4)
     box_width = bpy.props.IntProperty(
         name="Box Width",
@@ -1678,7 +1684,7 @@ class ScreenCastKeysPreferences(bpy.types.AddonPreferences):
         default=(1.0, 1.0, 1.0, 0.3),
         min=0,
         max=1,
-        subtype='COLOR',
+        subtype='COLOR_GAMMA',
         size=4)
 
     def draw(self, context):
