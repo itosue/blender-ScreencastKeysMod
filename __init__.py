@@ -22,8 +22,8 @@
 bl_info = {
     "name": "Screencast Keys Mod",
     "author": "Paulo Gomes, Bart Crouch, John E. Herrenyo, Gaia Clary, Pablo Vazquez, chromoly",
-    "version": (1, 7, 3),
-    "blender": (2, 75, 0),
+    "version": (1, 7, 4),
+    "blender": (2, 76, 0),
     "location": "3D View > Properties Panel > Screencast Keys",
     "warning": "",
     "description": "Display keys pressed in the 3D View, "
@@ -804,7 +804,7 @@ class ModalHandlerManager:
 
 ###############################################################################
 def get_display_location(context):
-    pref = get_pref(context)
+    pref = get_addon_preferences(context)
     mouse_size = pref.mouse_size
 
     regions = [ar for ar in context.area.regions if ar.type == 'WINDOW']
@@ -1005,7 +1005,7 @@ def get_shape_data(shape):
 
 def draw_mouse(context, shape, style, alpha):
     # shape and position
-    pref = get_pref(context)
+    pref = get_addon_preferences(context)
     mouse_size = pref.mouse_size
     font_size = pref.font_size
 
@@ -1076,7 +1076,7 @@ def draw_mouse(context, shape, style, alpha):
 
 
 def draw_callback_px_text(cls, context):
-    pref = get_pref(context)
+    pref = get_addon_preferences(context)
     if not mm.is_running(context):
         return
 
@@ -1159,7 +1159,7 @@ def draw_callback_px_text(cls, context):
 
 
 def draw_modifiers(cls, context, pos_x, pos_y):
-    pref = get_pref(context)
+    pref = get_addon_preferences(context)
     font_color_r, font_color_g, font_color_b, font_color_alpha = pref.text_color
 
     keys = []
@@ -1197,7 +1197,7 @@ def draw_modifiers(cls, context, pos_x, pos_y):
 
 def draw_last_operator(context, pos_x, pos_y):
     wm = context.window_manager
-    pref = get_pref(context)
+    pref = get_addon_preferences(context)
     font_color_r, font_color_g, font_color_b, font_color_alpha = pref.text_color
 
     if wm.operators:
@@ -1218,7 +1218,7 @@ def draw_last_operator(context, pos_x, pos_y):
 
 
 def draw_timer(cls, context, pos_x, pos_y):
-    pref = get_pref(context)
+    pref = get_addon_preferences(context)
     # calculate overall time
     t = int(time.time() - cls.overall_time)
     overall_time = datetime.timedelta(seconds=t)
@@ -1234,7 +1234,7 @@ def draw_timer(cls, context, pos_x, pos_y):
 
 
 def draw_callback_px_box(cls, context, event_text):
-    pref = get_pref(context)
+    pref = get_addon_preferences(context)
 
     if not mm.is_running(context):
         return
@@ -1305,7 +1305,7 @@ def key_to_text(event_type, mods, count):
 
 
 def make_event_text(cls, context):
-    pref = get_pref(context)
+    pref = get_addon_preferences(context)
 
     # cleanup
     cur_time = time.time()
@@ -1433,7 +1433,7 @@ class ScreencastKeysStatus(bpy.types.Operator):
 
     @mm.modal
     def modal(self, context, event):
-        pref = get_pref(context)
+        pref = get_addon_preferences(context)
 
         ignore_event = False
         if event.type in ('MOUSEMOVE', 'INBETWEEN_MOUSEMOVE'):
@@ -1584,7 +1584,9 @@ class ScreencastKeysTimerReset(bpy.types.Operator):
 
 
 # properties used by the script
-class ScreenCastKeysPreferences(bpy.types.AddonPreferences):
+class ScreenCastKeysPreferences(
+        bpy.types.PropertyGroup if '.' in __package__ else
+        bpy.types.AddonPreferences):
     bl_idname = __package__
 
     pos_x = bpy.props.IntProperty(
@@ -1688,7 +1690,7 @@ class ScreenCastKeysPreferences(bpy.types.AddonPreferences):
         size=4)
 
     def draw(self, context):
-        pref = get_pref(context)
+        pref = ScreenCastKeysPreferences.get_prefs()
         layout = self.layout
         split = layout.split()
 
@@ -1756,9 +1758,21 @@ class ScreenCastKeysPreferences(bpy.types.AddonPreferences):
         row.enabled = pref.timer_show
         row.operator("view3d.screencast_keys_timer_reset", text="Reset")
 
+    @classmethod
+    def get_prefs(cls):
+        if '.' in __package__:
+            import importlib
+            pkg, name = __package__.split('.')
+            mod = importlib.import_module(pkg)
+            return mod.get_addon_preferences(name)
+        else:
+            context = bpy.context
+            return context.user_preferences.addons[__package__].preferences
 
-def get_pref(context):
-    return context.user_preferences.addons[__package__].preferences
+    @classmethod
+    def register(cls):
+        if '.' in __package__:
+            cls.get_prefs()
 
 
 # defining the panel
@@ -1768,7 +1782,7 @@ class OBJECT_PT_keys_status(bpy.types.Panel):
     bl_region_type = "UI"
 
     def draw(self, context):
-        pref = get_pref(context)
+        pref = ScreenCastKeysPreferences.get_prefs()
         layout = self.layout
 
         if not mm.is_running(context):
@@ -1865,6 +1879,8 @@ def register():
         kmi = km.keymap_items.new('view3d.screencast_keys', 'C', 'PRESS',
                                   shift=True, alt=True)
         addon_keymaps.append((km, kmi))
+
+
 
 
 def unregister():
